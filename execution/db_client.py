@@ -1,17 +1,124 @@
+import logging
 import os
-from prisma import Prisma
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
+from prisma import Prisma
+from prisma.models import Product, PriceHistory
 
+# Carrega variáveis de ambiente (.env) para o Prisma localizar o DATABASE_URL
 load_dotenv()
 
+# Configuração de logging para a camada de execução
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Instância global do cliente Prisma.
+# Como o gerador foi configurado com interface = "sync", as chamadas serão bloqueantes (síncronas).
 db = Prisma()
 
-async def connect_db():
-    """Inicializa a conexão com o banco de dados via Prisma."""
+def connect_db():
+    """
+    Inicializa a conexão com o banco de dados PostgreSQL se necessário.
+    Utilizado internamente pelas funções ou pode ser chamado explicitamente no startup da aplicação.
+    """
     if not db.is_connected():
-        await db.connect()
+        logger.info("Estabelecendo conexão síncrona com o PostgreSQL...")
+        db.connect()
 
-async def disconnect_db():
-    """Fecha a conexão com o banco de dados."""
+def disconnect_db():
+    """
+    Encerra a conexão com o banco de dados.
+    Deve ser chamado no shutdown do servidor ou worker para liberar recursos.
+    """
     if db.is_connected():
-        await db.disconnect()
+        logger.info("Encerrando conexão com o PostgreSQL...")
+        db.disconnect()
+
+def get_or_create_product(url: str, name: str = None, store: str = None) -> Product:
+    """
+    Busca um produto na tabela Product pela URL (única).
+    Se o produto não existir, realiza a criação com os dados fornecidos.
+
+    Args:
+        url (str): Link direto do produto no e-commerce.
+        name (str, optional): Nome legível do produto.
+        store (str, optional): Identificador da loja (amazon, mercadolivre, etc).
+
+    Returns:
+        Product: O objeto do produto (existente ou recém-criado).
+    """
+    connect_db()
+    try:
+        product = db.product.find_unique(where={"url": url})
+        
+        if not product:
+            logger.info(f"Novo produto detectado. Cadastrando URL: {url}")
+            product = db.product.create(
+                data={
+                    "url": url,
+                    "name": name or "Produto em Processamento",
+                    "store": store or "unknown"
+                }
+            )
+        return product
+    except Exception as e:
+        logger.error(f"Falha ao obter ou criar produto para url {url}: {e}")
+        raise
+
+def add_price_history(product_id: str, price: float) -> PriceHistory:
+    """
+    Registra uma nova entrada de preço para um produto específico.
+
+    Args:
+        product_id (str): ID único (CUID) do produto.
+        price (float): Valor numérico do preço capturado.
+
+    Returns:
+        PriceHistory: O registro do histórico de preço criado.
+    """
+    connect_db()
+    try:
+        logger.info(f"Registrando preço {price} para produto_id: {product_id}")
+        return db.pricehistory.create(
+            data={
+                "price": price,
+                "productId": product_id
+            }
+        )
+    except Exception as e:
+        logger.error(f"Erro ao inserir histórico de preço para {product_id}: {e}")
+        raise
+
+def get_product_with_history(url: str) -> dict:
+    """
+    Recupera os detalhes de um produto e toda sua árvore de preços vinculada.
+    Os preços são ordenados de forma decrescente por data (mais recentes primeiro).
+
+    Args:
+        url (str): URL do produto para busca.
+
+    Returns:
+        dict: Dicionário completo do produto incluindo a lista 'prices', ou dicionário vazio se não encontrado.
+    """
+    connect_db()
+    try:
+        product = db.product.find_unique(
+            where={"url": url},
+            include={
+                "prices": {
+                    "order_by": {
+                        "timestamp": "desc"
+                    }
+                }
+            }
+        )
+        
+        if not product:
+            logger.warning(f"Produto não encontrado no banco para a URL: {url}")
+            return {}
+            
+        # Converte o modelo Prisma/Pydantic em um dicionário Python para fácil consumo no front-end
+        return product.model_dump()
+    except Exception as e:
+        logger.error(f"Erro ao buscar produto com histórico para {url}: {e}")
+        raise
