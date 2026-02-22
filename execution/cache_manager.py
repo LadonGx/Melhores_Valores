@@ -30,7 +30,18 @@ def get_cached_price(product_url: str):
     return payload
 
 
-def set_cached_price(product_url: str, price: float, ttl: int = 3600):
-    """Salva o preço no Redis com um tempo de vida (TTL) padrão de 1 hora."""
-    payload = {"url": product_url, "price": float(price)}
+def set_cached_price(
+    product_url: str,
+    price: float,
+    name: str | None = None,
+    store: str | None = None,
+    ttl: int = 7200,
+):
+    """Salva o snapshot do produto no Redis com TTL padrão de 2 horas."""
+    payload = {
+        "url": product_url,
+        "price": float(price),
+        "name": name,
+        "store": store,
+    }
     redis_client.setex(_cache_key(product_url), ttl, json.dumps(payload))
