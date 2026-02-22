@@ -34,7 +34,7 @@ def disconnect_db():
         logger.info("Encerrando conexão com o PostgreSQL...")
         db.disconnect()
 
-def get_or_create_product(url: str, name: str = None, store: str = None) -> Product:
+def get_or_create_product(url: str, name: str = None, store: str = None, image_url: str = None) -> Product:
     """
     Busca um produto na tabela Product pela URL (única).
     Se o produto não existir, realiza a criação com os dados fornecidos.
@@ -43,6 +43,7 @@ def get_or_create_product(url: str, name: str = None, store: str = None) -> Prod
         url (str): Link direto do produto no e-commerce.
         name (str, optional): Nome legível do produto.
         store (str, optional): Identificador da loja (amazon, mercadolivre, etc).
+        image_url (str, optional): URL da imagem do produto.
 
     Returns:
         Product: O objeto do produto (existente ou recém-criado).
@@ -56,7 +57,8 @@ def get_or_create_product(url: str, name: str = None, store: str = None) -> Prod
             product = db.product.create(
                 data={
                     "url": url,
-                    "name": name or "Produto em Processamento",
+                    "name": name,
+                    "imageUrl": image_url,
                     "store": store or "unknown"
                 }
             )
@@ -65,23 +67,25 @@ def get_or_create_product(url: str, name: str = None, store: str = None) -> Prod
         logger.error(f"Falha ao obter ou criar produto para url {url}: {e}")
         raise
 
-def add_price_history(product_id: str, price: float) -> PriceHistory:
+def add_price_history(product_id: str, price: Optional[float], in_stock: bool = True) -> PriceHistory:
     """
     Registra uma nova entrada de preço para um produto específico.
 
     Args:
         product_id (str): ID único (CUID) do produto.
-        price (float): Valor numérico do preço capturado.
+        price (float, optional): Valor numérico do preço capturado. None se esgotado.
+        in_stock (bool): Se o produto está disponível para compra.
 
     Returns:
         PriceHistory: O registro do histórico de preço criado.
     """
     connect_db()
     try:
-        logger.info(f"Registrando preço {price} para produto_id: {product_id}")
+        logger.info(f"Registrando preço {price} para produto_id: {product_id} (Estoque: {in_stock})")
         return db.pricehistory.create(
             data={
                 "price": price,
+                "inStock": in_stock,
                 "productId": product_id
             }
         )
@@ -98,16 +102,16 @@ def get_product_with_history(url: str) -> dict:
         url (str): URL do produto para busca.
 
     Returns:
-        dict: Dicionário completo do produto incluindo a lista 'prices', ou dicionário vazio se não encontrado.
+        dict: Dicionário completo do produto incluindo a lista 'history', ou dicionário vazio se não encontrado.
     """
     connect_db()
     try:
         product = db.product.find_unique(
             where={"url": url},
             include={
-                "prices": {
+                "history": {
                     "order_by": {
-                        "timestamp": "desc"
+                        "scrapedAt": "desc"
                     }
                 }
             }
