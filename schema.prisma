@@ -1,27 +1,30 @@
 datasource db {
-    provider = "postgresql"
-    url      = env("DATABASE_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 generator client {
-    provider             = "prisma-client-py"
-    recursive_type_depth = 5
+  provider             = "prisma-client-py"
+  interface            = "sync"
+  recursive_type_depth = 5
 }
 
 model Product {
-    id        String         @id @default(cuid())
-    name      String
-    url       String         @unique
-    store     String // amazon, mercadolivre, aliexpress
-    createdAt DateTime       @default(now())
-    updatedAt DateTime       @updatedAt
-    prices    PriceHistory[]
+  id        String         @id @default(uuid())
+  url       String         @unique
+  name      String?
+  imageUrl  String? // NOVO: Para mostrar a foto no front-end
+  store     String // ex: 'amazon', 'mercadolivre', 'aliexpress'
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  history   PriceHistory[]
 }
 
 model PriceHistory {
-    id        String   @id @default(cuid())
-    price     Float
-    timestamp DateTime @default(now())
-    product   Product  @relation(fields: [productId], references: [id])
-    productId String
+  id        String   @id @default(uuid())
+  price     Float? // Mudamos para opcional (Float?), pois se estiver sem estoque, não tem preço.
+  inStock   Boolean  @default(true) // NOVO: O produto está disponível para compra?
+  scrapedAt DateTime @default(now())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id])
 }
