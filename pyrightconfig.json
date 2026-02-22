@@ -1,0 +1,13 @@
+{
+  "executionEnvironments": [
+    {
+      "root": "execution"
+    }
+  ],
+  "include": ["execution"],
+  "exclude": ["**/node_modules", "**/__pycache__", "venv"],
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "pythonVersion": "3.11",
+  "pythonPlatform": "Windows"
+}

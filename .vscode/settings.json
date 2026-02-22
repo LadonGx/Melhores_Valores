@@ -1,0 +1,7 @@
+{
+    "prisma.pinToPrisma6": true,
+    "python.defaultInterpreterPath": "${workspaceFolder}/venv/Scripts/python.exe",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/venv/Lib/site-packages"
+    ]
+}
