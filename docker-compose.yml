@@ -31,7 +31,7 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/price_tracker
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://redis:6379/1
     depends_on:
       - db
       - redis

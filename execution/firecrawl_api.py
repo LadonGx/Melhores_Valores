@@ -21,16 +21,40 @@ def scrape_product_data(url: str):
         "Authorization": f"Bearer {FIRECRAWL_API_KEY}",
         "Content-Type": "application/json",
     }
-    payload = {"url": url, "formats": ["markdown", "html"]}
+    payload = {
+        "url": url, 
+        "formats": ["extract"],
+        "extract": {
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "price": {"type": "number"}
+                },
+                "required": ["title", "price"]
+            }
+        }
+    }
 
     try:
         response = requests.post(
             FIRECRAWL_BASE_URL,
             json=payload,
             headers=headers,
-            timeout=30,
+            timeout=60,
         )
         response.raise_for_status()
-        return response.json()
-    except requests.RequestException:
+        
+        # Firecrawl returns data in response.json()["data"]["extract"]
+        res_json = response.json()
+        extracted = res_json.get("data", {}).get("extract", {})
+        
+        # Mapeia o resultado para o formato que os adaptadores já esperam
+        return {
+            "data": {
+                "metadata": extracted
+            }
+        }
+    except requests.RequestException as e:
+        print(f"Erro no Firecrawl: {e}")
         return {}

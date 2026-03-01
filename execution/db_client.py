@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 # Como o gerador foi configurado com interface = "sync", as chamadas serão bloqueantes (síncronas).
 db = Prisma()
 
+import sys
+
 def connect_db():
     """
     Inicializa a conexão com o banco de dados PostgreSQL se necessário.
@@ -22,6 +24,14 @@ def connect_db():
     """
     if not db.is_connected():
         logger.info("Estabelecendo conexão síncrona com o PostgreSQL...")
+        
+        # Bugfix: Celery substitui o sys.stdout por um LoggingProxy sem método fileno()
+        # O Prisma-Python usa Popen por baixo dos panos e quebra requerendo esse método.
+        if not hasattr(sys.stdout, 'fileno'):
+            sys.stdout.fileno = lambda: 1
+        if not hasattr(sys.stderr, 'fileno'):
+            sys.stderr.fileno = lambda: 2
+            
         db.connect()
 
 def disconnect_db():
