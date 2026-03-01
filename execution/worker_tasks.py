@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from .adapters import normalize_store, parse_product_data
 from .cache_manager import get_cached_price, set_cached_price
-from .db_client import add_price_history, get_or_create_product
+from .db_client import add_price_history, get_all_products, get_or_create_product
 from .firecrawl_api import scrape_product_data
 
 load_dotenv()
@@ -112,6 +112,25 @@ def process_price_check(url: str, store: str) -> dict[str, Any]:
             "store": store,
             "reason": str(exc),
         }
+
+
+@app.task
+def schedule_all_products() -> dict[str, Any]:
+    """Reenfileira todos os produtos cadastrados para nova checagem."""
+    products = get_all_products()
+    scheduled = 0
+
+    for product in products:
+        if not product.url or not product.store:
+            continue
+
+        process_price_check.delay(product.url, product.store)
+        scheduled += 1
+
+    return {
+        "status": "ok",
+        "scheduled_products": scheduled,
+    }
 
 
 # Importa o agendamento para que o Celery Beat o reconheça

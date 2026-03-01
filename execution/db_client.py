@@ -1,6 +1,5 @@
 import logging
-import os
-from typing import Optional, Dict, Any
+from typing import Optional
 from dotenv import load_dotenv
 from prisma import Prisma
 from prisma.models import Product, PriceHistory
@@ -93,13 +92,13 @@ def add_price_history(product_id: str, price: Optional[float], in_stock: bool = 
         logger.error(f"Erro ao inserir histórico de preço para {product_id}: {e}")
         raise
 
-def get_product_with_history(url: str) -> dict:
+def get_product_with_history(product_id: str) -> dict:
     """
     Recupera os detalhes de um produto e toda sua árvore de preços vinculada.
     Os preços são ordenados de forma decrescente por data (mais recentes primeiro).
 
     Args:
-        url (str): URL do produto para busca.
+        product_id (str): ID do produto para busca.
 
     Returns:
         dict: Dicionário completo do produto incluindo a lista 'history', ou dicionário vazio se não encontrado.
@@ -107,7 +106,7 @@ def get_product_with_history(url: str) -> dict:
     connect_db()
     try:
         product = db.product.find_unique(
-            where={"url": url},
+            where={"id": product_id},
             include={
                 "history": {
                     "order_by": {
@@ -118,11 +117,21 @@ def get_product_with_history(url: str) -> dict:
         )
         
         if not product:
-            logger.warning(f"Produto não encontrado no banco para a URL: {url}")
+            logger.warning(f"Produto não encontrado no banco para o ID: {product_id}")
             return {}
             
         # Converte o modelo Prisma/Pydantic em um dicionário Python para fácil consumo no front-end
         return product.model_dump()
     except Exception as e:
-        logger.error(f"Erro ao buscar produto com histórico para {url}: {e}")
+        logger.error(f"Erro ao buscar produto com histórico para {product_id}: {e}")
+        raise
+
+
+def get_all_products() -> list[Product]:
+    """Retorna todos os produtos cadastrados para agendamento em lote."""
+    connect_db()
+    try:
+        return db.product.find_many()
+    except Exception as e:
+        logger.error(f"Erro ao buscar produtos para agendamento: {e}")
         raise
