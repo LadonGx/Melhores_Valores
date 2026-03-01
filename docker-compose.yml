@@ -39,7 +39,7 @@ services:
   worker:
     build: .
     container_name: price_tracker_worker
-    command: celery -A execution.worker_tasks worker --loglevel=info
+    command: celery -A execution.worker_tasks worker --loglevel=info --concurrency=2
     volumes:
       - .:/app
     environment:
