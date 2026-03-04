@@ -1,15 +1,20 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .db_client import get_product_with_history
 from .store_detection import detect_store_from_url
-from .worker_tasks import process_price_check
+from .worker_tasks import automatic_search_products, process_price_check
 
 app = FastAPI(title="Rastreador de Preços - API")
 
 
 class MonitorRequest(BaseModel):
     url: str
+
+
+class AutomaticSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    limit: int = Field(default=10, ge=1, le=20)
 
 
 @app.get("/")
@@ -32,6 +37,20 @@ async def add_product_to_monitor(payload: MonitorRequest):
         "status": "queued",
         "url": payload.url,
         "store": detected_store,
+    }
+
+
+@app.post("/search/automatic")
+async def trigger_automatic_search(payload: AutomaticSearchRequest):
+    """Dispara busca automática por nome em Amazon, Mercado Livre e Shopee."""
+    task = automatic_search_products.delay(payload.query, payload.limit)
+    return {
+        "message": "Busca automática enviada para a fila de processamento",
+        "task_id": task.id,
+        "status": "queued",
+        "query": payload.query,
+        "limit": payload.limit,
+        "stores": ["amazon", "mercadolivre", "shopee"],
     }
 
 

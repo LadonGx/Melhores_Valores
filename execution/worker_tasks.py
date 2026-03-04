@@ -7,8 +7,14 @@ from dotenv import load_dotenv
 
 from .adapters import normalize_store, parse_product_data
 from .cache_manager import get_cached_price, set_cached_price
-from .db_client import add_price_history, get_all_products, get_or_create_product
-from .firecrawl_api import scrape_product_data
+from .db_client import (
+    add_price_history,
+    get_all_products,
+    get_or_create_product,
+    save_automatic_search_results,
+)
+from .firecrawl_api import scrape_product_data, scrape_search_results
+from .search_engine import SUPPORTED_AUTOMATIC_SEARCH_STORES, build_search_url
 
 load_dotenv()
 
@@ -99,6 +105,42 @@ def run_price_pipeline(url: str, store: str) -> dict[str, Any]:
     )
 
 
+def run_automatic_search_pipeline(query: str, limit: int = 10) -> dict[str, Any]:
+    """Busca produtos por nome em múltiplas lojas e salva os resultados no PostgreSQL."""
+    normalized_query = (query or "").strip()
+    if not normalized_query:
+        raise ValueError("'query' deve ser uma string não vazia.")
+
+    max_results = max(1, min(limit, 20))
+    summary: dict[str, Any] = {
+        "status": "ok",
+        "query": normalized_query,
+        "limit": max_results,
+        "stores": {},
+    }
+
+    total_saved = 0
+
+    for store in SUPPORTED_AUTOMATIC_SEARCH_STORES:
+        search_url = build_search_url(store, normalized_query)
+        products = scrape_search_results(search_url, limit=max_results)
+
+        for index, product in enumerate(products, start=1):
+            product["position"] = index
+
+        saved_count = save_automatic_search_results(normalized_query, store, products)
+        total_saved += saved_count
+
+        summary["stores"][store] = {
+            "search_url": search_url,
+            "found": len(products),
+            "saved": saved_count,
+        }
+
+    summary["saved_total"] = total_saved
+    return summary
+
+
 @app.task
 def process_price_check(url: str, store: str) -> dict[str, Any]:
     """Executa o pipeline de checagem com logs estruturados."""
@@ -110,6 +152,20 @@ def process_price_check(url: str, store: str) -> dict[str, Any]:
             "status": "error",
             "url": url,
             "store": store,
+            "reason": str(exc),
+        }
+
+
+@app.task
+def automatic_search_products(query: str, limit: int = 10) -> dict[str, Any]:
+    """Task Celery para busca automática multi-loja por nome de produto."""
+    try:
+        return run_automatic_search_pipeline(query=query, limit=limit)
+    except Exception as exc:
+        logger.exception("Erro na busca automática. query=%s", query)
+        return {
+            "status": "error",
+            "query": query,
             "reason": str(exc),
         }
 

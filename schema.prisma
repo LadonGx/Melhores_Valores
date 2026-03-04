@@ -13,8 +13,8 @@ model Product {
   id        String         @id @default(uuid())
   url       String         @unique
   name      String?
-  imageUrl  String? // NOVO: Para mostrar a foto no front-end
-  store     String // ex: 'amazon', 'mercadolivre', 'aliexpress'
+  imageUrl  String?
+  store     String
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
   history   PriceHistory[]
@@ -22,9 +22,24 @@ model Product {
 
 model PriceHistory {
   id        String   @id @default(uuid())
-  price     Float? // Mudamos para opcional (Float?), pois se estiver sem estoque, não tem preço.
-  inStock   Boolean  @default(true) // NOVO: O produto está disponível para compra?
+  price     Float?
+  inStock   Boolean  @default(true)
   scrapedAt DateTime @default(now())
   productId String
   product   Product  @relation(fields: [productId], references: [id])
+}
+
+model AutomaticSearchResult {
+  id         String   @id @default(uuid())
+  query      String
+  store      String
+  productUrl String
+  productName String?
+  price      Float?
+  imageUrl   String?
+  position   Int?
+  searchedAt DateTime @default(now())
+
+  @@index([query, store, searchedAt])
+  @@index([store, searchedAt])
 }
