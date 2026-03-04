@@ -1,39 +1,36 @@
 # 🤖 Prompt de Implementação: Feature de Busca Automática de Produtos
 
-> **Para:** IA da IDE (Google Antigravity)
-> **Projeto:** Price Tracker
-> **Objetivo:** Implementar um mecanismo de busca automática de produtos por nome nas lojas Amazon, Mercado Livre e Shopee, salvando os resultados em uma nova tabela no banco de dados PostgreSQL.
+> **Versão:** 2.0 — Alinhado com a arquitetura real do projeto  
+> **Projeto:** Price Tracker (Melhores Valores)  
+> **Diretiva de referência:** `directives/07_automatic_search.md`  
+> **Status da feature:** ❌ Pendente de implementação
 
 ---
 
-## 📌 Contexto do Projeto
+## 📌 Contexto e Regras Obrigatórias
 
-Este projeto é um **Price Tracker** com a seguinte stack:
+Antes de escrever qualquer código, leia obrigatoriamente:
 
-- **API:** FastAPI
-- **Banco de dados:** PostgreSQL via Prisma ORM (`prisma-client-python`)
-- **Fila de tarefas:** Celery + Celery Beat
-- **Cache/Broker:** Redis
-- **Scraping atual:** httpx + BeautifulSoup + Playwright (em cascata), com Firecrawl como fallback
-- **Padrão de projeto:** Adapters por loja, orquestrador central, workers assíncronos
+- `directives/04_adapters_pattern.md` — padrão de adapters que deve ser seguido
+- `directives/05_caching_rules.md` — regra Cache-First obrigatória
+- `directives/07_automatic_search.md` — especificação completa desta feature
 
-O fluxo esperado da nova feature:
+### Restrições de arquitetura que DEVEM ser respeitadas:
 
-1. Usuário envia `POST /search` com o nome do produto
-2. FastAPI despacha uma task Celery (assíncrono)
-3. O worker busca o produto nas 3 lojas simultaneamente
-4. Os resultados são normalizados e salvos no PostgreSQL
-5. Usuário consulta `GET /search/{search_id}` para ver os resultados
+1. **`db_client.py` é a única interface com o banco.** Nunca chame o cliente Prisma diretamente em outro arquivo. Toda nova operação de banco deve ser uma nova função em `db_client.py`.
+2. **O cliente Prisma é síncrono** (`prisma-client-python 0.11.0`). Não use `await` nas chamadas ao banco.
+3. **Não modifique nenhum arquivo existente além dos indicados neste prompt.** Apenas `schema.prisma`, `db_client.py`, `worker_tasks.py` e `web_server.py` devem ser alterados.
+4. **Não adicione novas dependências ao `requirements.txt`.** Todas as bibliotecas necessárias (`httpx`, `beautifulsoup4`, `lxml`) já estão instaladas.
 
 ---
 
-## 🗄️ PASSO 1 — Atualizar o `schema.prisma`
+## 🗄️ PASSO 1 — Atualizar `schema.prisma`
 
-Adicione o model abaixo ao arquivo `schema.prisma` existente:
+Adicione o model abaixo **ao final** do arquivo `schema.prisma`, após os models existentes (`Product` e `PriceHistory`):
 
 ```prisma
 model SearchResult {
-  id           String   @id @default(cuid())
+  id           String   @id @default(uuid())
   search_id    String
   query        String
   store        String
@@ -51,7 +48,7 @@ model SearchResult {
 }
 ```
 
-Após adicionar, rode o comando de migração do Prisma:
+Após salvar, execute os comandos de migração:
 
 ```bash
 prisma migrate dev --name add_search_results
@@ -60,9 +57,78 @@ prisma generate
 
 ---
 
-## 📁 PASSO 2 — Criar a pasta `execution/search_scrapers/`
+## 🐍 PASSO 2 — Adicionar funções em `execution/db_client.py`
 
-Crie a pasta e os seguintes arquivos dentro dela:
+**Motivo:** `db_client.py` é a única interface com o banco no projeto. Seguindo o padrão já existente das funções `get_or_create_product`, `add_price_history`, etc., adicione as duas funções abaixo **ao final do arquivo**, antes de qualquer bloco `if __name__ == "__main__"`, se existir.
+
+```python
+# ─────────────────────────────────────────────
+# SearchResult — Busca automática de produtos
+# ─────────────────────────────────────────────
+
+def save_search_results(search_id: str, query: str, results: list[dict]) -> int:
+    """
+    Persiste a lista de resultados de busca no banco de dados.
+    Segue o padrão síncrono do projeto (prisma-client-python).
+
+    Args:
+        search_id: UUID que agrupa todos os resultados desta busca.
+        query: Termo buscado pelo usuário (ex: "iPhone 15").
+        results: Lista de dicts normalizados retornados pelos search_scrapers.
+
+    Returns:
+        Número de registros salvos com sucesso.
+    """
+    saved = 0
+    for item in results:
+        try:
+            db.searchresult.create(data={
+                "search_id":    search_id,
+                "query":        query,
+                "store":        item["store"],
+                "title":        item["title"],
+                "price":        item.get("price"),
+                "currency":     item.get("currency", "BRL"),
+                "image_url":    item.get("image_url"),
+                "product_url":  item["product_url"],
+                "rating":       item.get("rating"),
+                "review_count": item.get("review_count"),
+            })
+            saved += 1
+        except Exception as e:
+            print(f"[db_client] Erro ao salvar SearchResult: {e}")
+            continue
+    return saved
+
+
+def get_search_results(search_id: str) -> list:
+    """
+    Retorna todos os resultados de uma busca ordenados pelo menor preço.
+
+    Args:
+        search_id: UUID da busca a ser consultada.
+
+    Returns:
+        Lista de SearchResult ordenada por preço ascendente.
+        Resultados sem preço (None) aparecem ao final.
+    """
+    try:
+        return db.searchresult.find_many(
+            where={"search_id": search_id},
+            order={"price": "asc"},
+        )
+    except Exception as e:
+        print(f"[db_client] Erro ao buscar SearchResults: {e}")
+        return []
+```
+
+---
+
+## 📁 PASSO 3 — Criar a pasta `execution/search_scrapers/`
+
+Crie a pasta e os 4 arquivos a seguir:
+
+---
 
 ### `execution/search_scrapers/__init__.py`
 
@@ -74,7 +140,7 @@ Crie a pasta e os seguintes arquivos dentro dela:
 
 ### `execution/search_scrapers/amazon_search.py`
 
-**Motivo:** Faz scraping da página de resultados da Amazon via httpx + BeautifulSoup. A Amazon renderiza os resultados de busca no HTML estático, dispensando Playwright neste caso.
+**Motivo:** Faz scraping da página de resultados da Amazon BR via `httpx` + `BeautifulSoup`. A Amazon renderiza os cards de produto no HTML estático da página de busca, dispensando Playwright. Segue o mesmo padrão do `base_scraper.py` já existente no projeto (pool de User-Agents rotacionados).
 
 ```python
 import httpx
@@ -95,7 +161,10 @@ HEADERS_POOL = [
 ]
 
 def search_amazon(query: str, max_results: int = 10) -> list[dict]:
-    """Busca produtos na Amazon BR e retorna lista normalizada de resultados."""
+    """
+    Busca produtos na Amazon BR pela página de resultados.
+    Retorna lista normalizada de dicts prontos para salvar via db_client.
+    """
     url = f"https://www.amazon.com.br/s?k={query.replace(' ', '+')}"
     results = []
 
@@ -167,7 +236,7 @@ def search_amazon(query: str, max_results: int = 10) -> list[dict]:
 
 ### `execution/search_scrapers/mercadolivre_search.py`
 
-**Motivo:** Faz scraping da página de listagem do Mercado Livre. A página de busca do ML renderiza os cards de produto no HTML, funcionando com httpx simples na maioria dos casos.
+**Motivo:** Faz scraping da listagem de busca do Mercado Livre. A página de resultados do ML renderiza os cards no HTML, funcionando com `httpx` simples. Usa os mesmos seletores CSS do `mercadolivre.py` (adapter existente).
 
 ```python
 import httpx
@@ -179,7 +248,10 @@ HEADERS = {
 }
 
 def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
-    """Busca produtos no Mercado Livre BR e retorna lista normalizada de resultados."""
+    """
+    Busca produtos no Mercado Livre BR pela página de listagem.
+    Retorna lista normalizada de dicts prontos para salvar via db_client.
+    """
     url = f"https://lista.mercadolivre.com.br/{query.replace(' ', '-')}"
     results = []
 
@@ -249,7 +321,7 @@ def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
 
 ### `execution/search_scrapers/shopee_search.py`
 
-**Motivo:** A Shopee carrega seus produtos via API interna JSON (não via HTML), o que torna esse scraper mais estável e rápido que os demais — sem necessidade de Playwright ou parsing de HTML.
+**Motivo:** A Shopee expõe uma API interna JSON que retorna os produtos de busca estruturados. Isso é mais estável que scraping de HTML (sem seletores CSS para quebrar) e não requer Playwright. O preço vem em centavos × 100.000 e é convertido para float.
 
 ```python
 import httpx
@@ -263,7 +335,8 @@ HEADERS = {
 def search_shopee(query: str, max_results: int = 10) -> list[dict]:
     """
     Busca produtos na Shopee BR via API interna JSON.
-    Mais estável que scraping de HTML pois os dados já chegam estruturados.
+    Mais estável que scraping de HTML — dados chegam estruturados.
+    Retorna lista normalizada de dicts prontos para salvar via db_client.
     """
     url = "https://shopee.com.br/api/v4/search/search_items"
     params = {
@@ -286,13 +359,13 @@ def search_shopee(query: str, max_results: int = 10) -> list[dict]:
 
         for item in items[:max_results]:
             try:
-                info         = item.get("item_basic", {})
-                shop_id      = info.get("shopid")
-                item_id      = info.get("itemid")
-                name         = info.get("name", "")
-                price_raw    = info.get("price")       # vem em centavos * 100000
-                image_id     = info.get("image", "")
-                rating_obj   = info.get("item_rating", {})
+                info      = item.get("item_basic", {})
+                shop_id   = info.get("shopid")
+                item_id   = info.get("itemid")
+                name      = info.get("name", "")
+                price_raw = info.get("price")        # centavos × 100.000
+                image_id  = info.get("image", "")
+                rating_obj = info.get("item_rating", {})
 
                 if not name:
                     continue
@@ -330,107 +403,134 @@ def search_shopee(query: str, max_results: int = 10) -> list[dict]:
 
 ---
 
-## 📁 PASSO 3 — Criar `execution/search_orchestrator.py`
+## 📁 PASSO 4 — Criar `execution/search_orchestrator.py`
 
-**Motivo:** Centraliza a lógica de busca nas 3 lojas, normaliza os dados e persiste no banco. Mantém o padrão do projeto de ter um orquestrador separado dos scrapers.
+**Motivo:** Segue o mesmo padrão do `scraping_orchestrator.py` já existente — um módulo central que coordena múltiplos scrapers e delega a persistência ao `db_client.py`. Não acessa o banco diretamente.
 
 ```python
 import uuid
+
 from execution.search_scrapers.amazon_search       import search_amazon
 from execution.search_scrapers.mercadolivre_search import search_mercadolivre
 from execution.search_scrapers.shopee_search       import search_shopee
-from execution.db_client import db  # cliente Prisma já existente no projeto
+from execution.db_client                           import save_search_results
+
+SEARCH_FUNCTIONS = [
+    search_amazon,
+    search_mercadolivre,
+    search_shopee,
+]
 
 def run_product_search(query: str) -> str:
     """
-    Executa a busca do produto nas 3 lojas e persiste os resultados no banco.
-    Retorna o search_id para o cliente consultar via GET /search/{search_id}.
-    """
-    search_id = str(uuid.uuid4())
+    Executa a busca por nome do produto nas 3 lojas e persiste os resultados.
 
+    Fluxo:
+        1. Gera um search_id único para agrupar os resultados desta busca
+        2. Chama cada scraper de busca (Amazon, Mercado Livre, Shopee)
+        3. Agrega todos os resultados normalizados
+        4. Delega a persistência ao db_client (única interface com o banco)
+        5. Retorna o search_id para o cliente consultar via GET /search/{id}
+
+    Args:
+        query: Termo de busca informado pelo usuário (ex: "iPhone 15 128GB").
+
+    Returns:
+        search_id (UUID string) para consulta posterior dos resultados.
+    """
+    search_id   = str(uuid.uuid4())
     all_results = []
-    for search_fn in [search_amazon, search_mercadolivre, search_shopee]:
+
+    for search_fn in SEARCH_FUNCTIONS:
         try:
             results = search_fn(query, max_results=10)
             all_results.extend(results)
+            print(f"[search_orchestrator] {search_fn.__name__}: {len(results)} resultados")
         except Exception as e:
-            print(f"[search_orchestrator] Scraper falhou: {e}")
+            print(f"[search_orchestrator] {search_fn.__name__} falhou: {e}")
             continue
 
-    for item in all_results:
-        try:
-            db.searchresult.create(data={
-                "search_id":    search_id,
-                "query":        query,
-                "store":        item["store"],
-                "title":        item["title"],
-                "price":        item.get("price"),
-                "currency":     item.get("currency", "BRL"),
-                "image_url":    item.get("image_url"),
-                "product_url":  item["product_url"],
-                "rating":       item.get("rating"),
-                "review_count": item.get("review_count"),
-            })
-        except Exception as e:
-            print(f"[search_orchestrator] Erro ao salvar item: {e}")
-            continue
+    saved = save_search_results(search_id, query, all_results)
+    print(f"[search_orchestrator] {saved}/{len(all_results)} resultados salvos | query='{query}' | id={search_id}")
 
-    print(f"[search_orchestrator] {len(all_results)} resultados salvos | query='{query}' | search_id={search_id}")
     return search_id
 ```
 
 ---
 
-## ✏️ PASSO 4 — Modificar `execution/worker_tasks.py`
+## ✏️ PASSO 5 — Modificar `execution/worker_tasks.py`
 
-Adicione a nova task Celery ao arquivo existente. **Não remova nada**, apenas acrescente:
+Adicione a task abaixo **ao final do arquivo**, junto das tasks existentes (`process_price_check`, `schedule_all_products`). **Não modifique nenhuma task existente.**
 
 ```python
-# --- NOVA TASK: busca de produtos por nome ---
-@celery_app.task
+# ─────────────────────────────────────────────
+# Task: Busca de produto por nome
+# ─────────────────────────────────────────────
+
+@celery_app.task(name="search_products")
 def task_search_products(query: str) -> str:
-    """Task assíncrona que executa a busca de produtos nas lojas."""
+    """
+    Task Celery assíncrona que executa a busca de produtos por nome.
+    Disparada pelo endpoint POST /search do web_server.py.
+
+    Args:
+        query: Nome do produto a buscar (ex: "Galaxy S24").
+
+    Returns:
+        search_id (UUID string) para consulta via GET /search/{search_id}.
+    """
     from execution.search_orchestrator import run_product_search
     return run_product_search(query)
 ```
 
 ---
 
-## ✏️ PASSO 5 — Modificar `execution/web_server.py`
+## ✏️ PASSO 6 — Modificar `execution/web_server.py`
 
-Adicione as duas novas rotas ao arquivo FastAPI existente. **Não remova nada**, apenas acrescente:
+Adicione as duas rotas abaixo **ao final do arquivo**, após os endpoints existentes (`/`, `/monitor/add`, `/product/{product_id}/history`). **Não modifique nenhuma rota existente.**
 
 ```python
-from execution.worker_tasks import task_search_products
-from execution.db_client import db
+# ─────────────────────────────────────────────
+# Rotas: Busca automática de produtos por nome
+# ─────────────────────────────────────────────
 
-# --- ROTA: disparar busca ---
 @app.post("/search")
-async def search_products(body: dict):
+def search_products(request: dict):
     """
     Recebe o nome do produto e dispara a busca assíncrona nas 3 lojas.
-    Retorna imediatamente com o task_id para acompanhamento.
+    Retorna imediatamente com o task_id — a busca roda em background no Celery.
+
+    Body: {"query": "iPhone 15 128GB"}
     """
-    query = body.get("query", "").strip()
+    query = request.get("query", "").strip()
+
     if not query:
         raise HTTPException(status_code=400, detail="Campo 'query' é obrigatório.")
 
+    if len(query) < 2:
+        raise HTTPException(status_code=400, detail="Query muito curta. Mínimo de 2 caracteres.")
+
     task = task_search_products.delay(query)
+
     return {
         "status":  "processing",
         "task_id": task.id,
         "query":   query,
-        "message": "Busca iniciada. Consulte /search/{search_id} quando concluída."
+        "message": "Busca iniciada. Use GET /search/{task_id} para consultar os resultados.",
     }
 
-# --- ROTA: consultar resultados ---
+
 @app.get("/search/{search_id}")
-async def get_search_results(search_id: str):
-    """Retorna todos os produtos encontrados para um determinado search_id."""
-    results = db.searchresult.find_many(
-        where={"search_id": search_id},
-        order={"price": "asc"}  # ordena do mais barato ao mais caro
-    )
+def get_search_results(search_id: str):
+    """
+    Retorna os produtos encontrados para um search_id, ordenados por menor preço.
+
+    Parâmetro: search_id retornado pelo POST /search (campo task_id).
+    """
+    from execution.db_client import get_search_results
+
+    results = get_search_results(search_id)
+
     return {
         "search_id": search_id,
         "total":     len(results),
@@ -438,23 +538,15 @@ async def get_search_results(search_id: str):
     }
 ```
 
----
-
-## 📦 PASSO 6 — Verificar `requirements.txt`
-
-Confirme que as seguintes dependências já estão no `requirements.txt`. Se não estiverem, adicione-as:
-
-```
-httpx==0.27.0
-beautifulsoup4==4.12.3
-lxml==5.2.2
-```
-
-> `playwright` já deve estar presente se o prompt anterior foi implementado.
+> ⚠️ **Atenção:** O import de `task_search_products` no topo do `web_server.py` já deve existir se o arquivo já importa outras tasks. Caso contrário, adicione ao bloco de imports:
+>
+> ```python
+> from execution.worker_tasks import task_search_products
+> ```
 
 ---
 
-## 🗂️ Estrutura final de pastas após a implementação
+## 🗂️ Estrutura final após a implementação
 
 ```
 execution/
@@ -464,39 +556,40 @@ execution/
 │   ├── mercadolivre_search.py     ✨ novo
 │   └── shopee_search.py           ✨ novo
 ├── search_orchestrator.py         ✨ novo
-├── adapters/
-│   ├── amazon.py
-│   ├── mercadolivre.py
-│   └── aliexpress.py
-├── scrapers/
-│   ├── base_scraper.py
-│   └── playwright_scraper.py
-├── scraping_orchestrator.py
-├── cache_manager.py
-├── db_client.py
-├── firecrawl_api.py
-├── scheduler.py
-├── store_detection.py
-├── web_server.py                  ✏️ modificado (2 novas rotas)
-└── worker_tasks.py                ✏️ modificado (1 nova task)
+│
+├── adapters/                      (sem alterações)
+├── scrapers/                      (sem alterações)
+├── scraping_orchestrator.py       (sem alterações)
+├── cache_manager.py               (sem alterações)
+├── firecrawl_api.py               (sem alterações)
+├── store_detection.py             (sem alterações)
+├── scheduler.py                   (sem alterações)
+│
+├── db_client.py                   ✏️ +2 funções ao final
+├── worker_tasks.py                ✏️ +1 task ao final
+└── web_server.py                  ✏️ +2 rotas ao final
 ```
 
 ---
 
 ## ✅ Checklist de Implementação
 
-- [ ] Model `SearchResult` adicionado ao `schema.prisma`
-- [ ] Migration do Prisma executada (`prisma migrate dev`)
+- [ ] Model `SearchResult` adicionado ao final do `schema.prisma`
+- [ ] `prisma migrate dev --name add_search_results` executado com sucesso
+- [ ] `prisma generate` executado com sucesso
+- [ ] Funções `save_search_results` e `get_search_results` adicionadas ao `db_client.py`
 - [ ] Pasta `execution/search_scrapers/` criada com os 4 arquivos
-- [ ] Arquivo `execution/search_orchestrator.py` criado
+- [ ] `execution/search_orchestrator.py` criado
 - [ ] Task `task_search_products` adicionada ao `worker_tasks.py`
+- [ ] Import de `task_search_products` adicionado ao `web_server.py`
 - [ ] Rotas `POST /search` e `GET /search/{search_id}` adicionadas ao `web_server.py`
-- [ ] Dependências verificadas no `requirements.txt`
+- [ ] Containers reiniciados: `docker-compose up --build`
 
 ---
 
 ## ⚠️ Pontos de Atenção
 
-- **Seletores CSS:** Os seletores do BeautifulSoup para Amazon e Mercado Livre podem mudar se as lojas redesenharem suas páginas. Se um scraper retornar lista vazia, o primeiro passo é inspecionar os seletores.
-- **Shopee API:** A Shopee é a mais estável por usar JSON interno, mas o endpoint pode mudar de versão (`v4` → `v5`). Monitore erros do tipo `[shopee_search] Erro`.
-- **Rate limiting:** Para volume baixo (uso pessoal), não é necessário adicionar delays entre requisições agora. Se no futuro o volume crescer, adicione `time.sleep(1)` entre chamadas no orquestrador.
+- **Nenhuma nova dependência é necessária.** `httpx`, `beautifulsoup4` e `lxml` já estão no `requirements.txt` e instalados no Dockerfile.
+- **Seletores CSS** da Amazon e Mercado Livre podem mudar se as lojas atualizarem o layout. Se um scraper retornar lista vazia, inspecione o HTML da página e atualize os seletores no arquivo correspondente — sem impactar o restante do sistema.
+- **Shopee usa API JSON interna**, sendo a mais estável dos três. Se parar de funcionar, verifique se o endpoint mudou de versão (`v4` → outra).
+- **O `search_id` retornado no `POST /search` é o `task.id` do Celery**, não um UUID gerado pelo orquestrador. O orquestrador gera seu próprio UUID internamente para agrupar os registros no banco. Para simplificar, considere alinhar os dois IDs se preferir usar apenas um identificador — mas isso é opcional para o MVP.
