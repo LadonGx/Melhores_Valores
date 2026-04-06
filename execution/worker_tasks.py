@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from .adapters import normalize_store, parse_product_data
 from .cache_manager import get_cached_price, set_cached_price
 from .db_client import add_price_history, get_all_products, get_or_create_product
-from .firecrawl_api import scrape_product_data
+from .scraping_orchestrator import scrape_product
 
 load_dotenv()
 
@@ -48,34 +48,50 @@ def run_price_pipeline(url: str, store: str) -> dict[str, Any]:
     normalized_store = normalize_store(store)
 
     cached_payload = get_cached_price(url)
-    if cached_payload and isinstance(cached_payload.get("price"), (int, float)):
+    cached_price = cached_payload.get("price") if cached_payload else None
+    if cached_payload and isinstance(cached_price, (int, float)) and cached_price > 0:
         return _build_success_payload(
             source="cache",
             url=url,
             store=normalized_store,
-            price=float(cached_payload["price"]),
+            price=float(cached_price),
             name=cached_payload.get("name"),
         )
 
-    raw_data = scrape_product_data(url)
-    if not raw_data:
+    scrape_result = scrape_product(url, store=normalized_store)
+    if not scrape_result:
         return {
             "status": "error",
             "url": url,
             "store": normalized_store,
-            "reason": "Falha ao extrair dados no Firecrawl.",
+            "reason": "Falha ao extrair dados através da cascata.",
         }
 
-    parsed_data = parse_product_data(normalized_store, raw_data)
+    # Compatibilidade com Firecrawl / Nível 1 & 2
+    if "data" in scrape_result:
+        parsed_data = parse_product_data(normalized_store, scrape_result)
+        source = "firecrawl"
+    else:
+        parsed_data = scrape_result
+        if "name" not in parsed_data and "title" in parsed_data:
+            parsed_data["name"] = parsed_data["title"]
+        source = "cascata"
+
     product_name = parsed_data.get("name")
     product_price = parsed_data.get("price")
 
-    if not isinstance(product_price, (int, float)):
+    if not isinstance(product_price, (int, float)) or product_price <= 0:
+        logger.warning(
+            "Preço inválido extraído (%.2f) para url=%s store=%s. Abortando salvamento.",
+            product_price or 0,
+            url,
+            normalized_store,
+        )
         return {
             "status": "error",
             "url": url,
             "store": normalized_store,
-            "reason": "Não foi possível extrair um preço numérico válido.",
+            "reason": f"Preço inválido extraído: {product_price}. Possível bloqueio anti-bot.",
         }
 
     product = get_or_create_product(url=url, name=product_name, store=normalized_store)
@@ -90,7 +106,7 @@ def run_price_pipeline(url: str, store: str) -> dict[str, Any]:
     )
 
     return _build_success_payload(
-        source="firecrawl",
+        source=source,
         url=url,
         store=normalized_store,
         name=product_name,
@@ -135,3 +151,24 @@ def schedule_all_products() -> dict[str, Any]:
 
 # Importa o agendamento para que o Celery Beat o reconheça
 from . import scheduler
+
+
+# ─────────────────────────────────────────────
+# Task: Busca de produto por nome
+# ─────────────────────────────────────────────
+
+@app.task(name="search_products")
+def task_search_products(query: str) -> str:
+    """
+    Task Celery assíncrona que executa a busca de produtos por nome.
+    Disparada pelo endpoint POST /search do web_server.py.
+
+    Args:
+        query: Nome do produto a buscar (ex: "Galaxy S24").
+
+    Returns:
+        search_id (UUID string) para consulta via GET /search/{search_id}.
+    """
+    from execution.search_orchestrator import run_product_search
+    return run_product_search(query)
+

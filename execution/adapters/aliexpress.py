@@ -1,5 +1,7 @@
 # AliExpress Adapter
 
+from bs4 import BeautifulSoup
+
 def extract_price(json_data):
     data = json_data.get("data", json_data)
     metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
@@ -15,3 +17,33 @@ def extract_name(json_data):
     data = json_data.get("data", json_data)
     metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
     return metadata.get("title") or metadata.get("name")
+
+
+def extract_from_html(html: str) -> dict | None:
+    """
+    Extrai preço e metadados do HTML bruto de uma página de produto do AliExpress.
+    """
+    soup = BeautifulSoup(html, "lxml")
+    try:
+        title_elem = soup.select_one("h1[data-pl='product-title']")
+        title = title_elem.get_text(strip=True) if title_elem else "Produto AliExpress"
+        
+        price_elem = soup.select_one(".price--currentPriceText--V8_y_b5") or soup.select_one(".product-price-value")
+        if not price_elem:
+            return None
+            
+        price_str = price_elem.get_text(strip=True).replace("R$", "").replace(".", "").replace(",", ".").strip()
+        price = float(price_str)
+        
+        img_elem = soup.select_one(".magnifier--image--1b7fXjT") or soup.select_one(".magnifier-image")
+        image_url = img_elem.get("src") if img_elem else None
+        
+        return {
+            "title": title,
+            "price": price,
+            "currency": "BRL",
+            "image_url": image_url,
+        }
+    except Exception as e:
+        print(f"[aliexpress adapter] Erro ao extrair: {e}")
+        return None
