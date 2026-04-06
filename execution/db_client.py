@@ -145,3 +145,65 @@ def get_all_products() -> list[Product]:
     except Exception as e:
         logger.error(f"Erro ao buscar produtos para agendamento: {e}")
         raise
+
+
+# ─────────────────────────────────────────────
+# SearchResult — Busca automática de produtos
+# ─────────────────────────────────────────────
+
+def save_search_results(search_id: str, query: str, results: list[dict]) -> int:
+    """
+    Persiste a lista de resultados de busca no banco de dados.
+    Segue o padrão síncrono do projeto (prisma-client-python).
+
+    Args:
+        search_id: UUID que agrupa todos os resultados desta busca.
+        query: Termo buscado pelo usuário (ex: "iPhone 15").
+        results: Lista de dicts normalizados retornados pelos search_scrapers.
+
+    Returns:
+        Número de registros salvos com sucesso.
+    """
+    connect_db()
+    saved = 0
+    for item in results:
+        try:
+            db.searchresult.create(data={
+                "search_id":    search_id,
+                "query":        query,
+                "store":        item["store"],
+                "title":        item["title"],
+                "price":        item.get("price"),
+                "currency":     item.get("currency", "BRL"),
+                "image_url":    item.get("image_url"),
+                "product_url":  item["product_url"],
+                "rating":       item.get("rating"),
+                "review_count": item.get("review_count"),
+            })
+            saved += 1
+        except Exception as e:
+            logger.error(f"[db_client] Erro ao salvar SearchResult: {e}")
+            continue
+    return saved
+
+
+def get_search_results(search_id: str) -> list:
+    """
+    Retorna todos os resultados de uma busca ordenados pelo menor preço.
+
+    Args:
+        search_id: UUID da busca a ser consultada.
+
+    Returns:
+        Lista de SearchResult ordenada por preço ascendente.
+        Resultados sem preço (None) aparecem ao final.
+    """
+    connect_db()
+    try:
+        return db.searchresult.find_many(
+            where={"search_id": search_id},
+            order={"price": "asc"},
+        )
+    except Exception as e:
+        logger.error(f"[db_client] Erro ao buscar SearchResults: {e}")
+        return []

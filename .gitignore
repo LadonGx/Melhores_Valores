@@ -9,3 +9,22 @@ ENV/
 env.bak/
 venv.bak/
 node_modules/
+
+# Celery
+celerybeat-schedule
+celerybeat-schedule.bak
+celerybeat-schedule.db
+celerybeat-schedule.dat
+celerybeat-schedule.dir
+
+# Editor (VS Code)
+.vscode/
+
+# Local Scripts / Debugging
+debug_scrapers.py
+.agents/
+
+# Others
+*.log
+.DS_Store
+.pytest_cache/

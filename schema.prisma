@@ -28,3 +28,21 @@ model PriceHistory {
   productId String
   product   Product  @relation(fields: [productId], references: [id])
 }
+
+model SearchResult {
+  id           String   @id @default(uuid())
+  search_id    String
+  query        String
+  store        String
+  title        String
+  price        Float?
+  currency     String   @default("BRL")
+  image_url    String?
+  product_url  String
+  rating       Float?
+  review_count Int?
+  found_at     DateTime @default(now())
+
+  @@index([search_id])
+  @@index([query, store])
+}

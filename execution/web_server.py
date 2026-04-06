@@ -1,11 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .db_client import get_product_with_history
+from .db_client import get_product_with_history, get_search_results
 from .store_detection import detect_store_from_url
-from .worker_tasks import process_price_check
+from .worker_tasks import process_price_check, task_search_products
 
 app = FastAPI(title="Rastreador de Preços - API")
+
 
 
 class MonitorRequest(BaseModel):
@@ -62,4 +63,54 @@ async def get_product_history(product_id: str):
         "lowest_price": lowest_price,
         "average_price": average_price,
         "history": history,
+    }
+
+
+# ─────────────────────────────────────────────
+# Rotas: Busca automática de produtos por nome
+# ─────────────────────────────────────────────
+
+class SearchRequest(BaseModel):
+    query: str
+
+
+@app.post("/search")
+def search_products(request: SearchRequest):
+    """
+    Recebe o nome do produto e dispara a busca assíncrona nas 3 lojas.
+    Retorna imediatamente com o task_id — a busca roda em background no Celery.
+
+    Body: {"query": "iPhone 15 128GB"}
+    """
+    query = request.query.strip()
+
+    if not query:
+        raise HTTPException(status_code=400, detail="Campo 'query' é obrigatório.")
+
+    if len(query) < 2:
+        raise HTTPException(status_code=400, detail="Query muito curta. Mínimo de 2 caracteres.")
+
+    task = task_search_products.delay(query)
+
+    return {
+        "status":  "processing",
+        "task_id": task.id,
+        "query":   query,
+        "message": "Busca iniciada. Use GET /search/{task_id} para consultar os resultados.",
+    }
+
+
+@app.get("/search/{search_id}")
+def get_search_results_endpoint(search_id: str):
+    """
+    Retorna os produtos encontrados para um search_id, ordenados por menor preço.
+
+    Parâmetro: search_id retornado pelo POST /search (campo task_id).
+    """
+    results = get_search_results(search_id)
+
+    return {
+        "search_id": search_id,
+        "total":     len(results),
+        "results":   [r.model_dump() for r in results],
     }

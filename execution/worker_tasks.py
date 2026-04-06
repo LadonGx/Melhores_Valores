@@ -151,3 +151,24 @@ def schedule_all_products() -> dict[str, Any]:
 
 # Importa o agendamento para que o Celery Beat o reconheça
 from . import scheduler
+
+
+# ─────────────────────────────────────────────
+# Task: Busca de produto por nome
+# ─────────────────────────────────────────────
+
+@app.task(name="search_products")
+def task_search_products(query: str) -> str:
+    """
+    Task Celery assíncrona que executa a busca de produtos por nome.
+    Disparada pelo endpoint POST /search do web_server.py.
+
+    Args:
+        query: Nome do produto a buscar (ex: "Galaxy S24").
+
+    Returns:
+        search_id (UUID string) para consulta via GET /search/{search_id}.
+    """
+    from execution.search_orchestrator import run_product_search
+    return run_product_search(query)
+
