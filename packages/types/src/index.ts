@@ -36,14 +36,20 @@ export interface Product {
   name: string | null;
   store: Store;
   image_url: string | null;
+  // Incluídos apenas no GET /products (não no sub-objeto de GET /product/{id}/history)
+  current_price?: number | null;
+  in_stock?: boolean | null;
+  last_checked?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface PriceHistoryEntry {
   id: string;
-  price: number;
-  created_at: string;
+  price: number | null;
+  inStock: boolean;
+  scrapedAt: string;
+  productId: string;
 }
 
 export interface ProductWithHistory {
@@ -59,7 +65,7 @@ export interface SearchResult {
   search_id: string;
   store: Store;
   title: string;
-  price: number;
+  price: number | null;
   currency: string;
   image_url: string | null;
   product_url: string;
@@ -70,3 +76,10 @@ export interface SearchResult {
 // ─── UI ───────────────────────────────────────────────────────────────────────
 
 export type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
+export interface ProductGroup {
+  id: string;
+  name: string;
+  productIds: string[];
+  createdAt: string;
+}

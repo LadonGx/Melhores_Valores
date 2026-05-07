@@ -19,12 +19,18 @@ const columns: Column<PriceHistoryEntry>[] = [
     key: 'price',
     header: 'Preço',
     width: '140px',
-    render: (row) => <strong>{formatCurrency(row.price)}</strong>,
+    render: (row) => <strong>{row.price != null ? formatCurrency(row.price) : '—'}</strong>,
+  },
+  {
+    key: 'inStock',
+    header: 'Em estoque',
+    width: '110px',
+    render: (row) => (row.inStock ? 'Sim' : 'Não'),
   },
   {
     key: 'date',
     header: 'Data da coleta',
-    render: (row) => formatDate(row.created_at),
+    render: (row) => formatDate(row.scrapedAt),
   },
 ];
 

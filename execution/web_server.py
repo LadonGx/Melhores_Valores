@@ -1,10 +1,21 @@
+from urllib.parse import urlparse, urlunparse
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .db_client import get_all_products, get_product_with_history, get_search_results
+from .db_client import (
+    add_price_history, delete_product, get_all_products, get_or_create_product,
+    get_product_with_history, get_search_results, update_product_name,
+)
 from .store_detection import detect_store_from_url
 from .worker_tasks import process_price_check, task_search_products
+
+
+def _normalize_url(url: str) -> str:
+    """Remove fragmentos (#tracking_params) e espaços da URL antes de armazenar."""
+    parsed = urlparse(url.strip())
+    return urlunparse(parsed._replace(fragment=""))
 
 app = FastAPI(title="Rastreador de Preços - API")
 
@@ -19,27 +30,41 @@ app.add_middleware(
 
 class MonitorRequest(BaseModel):
     url: str
+    name: str | None = None
+    image_url: str | None = None
+    price: float | None = None       # Preço já conhecido (ex: via SearchResult)
+    in_stock: bool = True
 
 
 @app.get("/products")
 async def list_products():
-    """Retorna todos os produtos cadastrados no banco."""
+    """Retorna todos os produtos com o preço mais recente."""
     products = get_all_products()
-    return {
-        "total": len(products),
-        "products": [
-            {
-                "id": p.id,
-                "url": p.url,
-                "name": p.name,
-                "store": p.store,
-                "image_url": p.imageUrl,
-                "created_at": p.createdAt.isoformat() if p.createdAt else None,
-                "updated_at": p.updatedAt.isoformat() if p.updatedAt else None,
-            }
-            for p in products
-        ],
-    }
+    result = []
+    for p in products:
+        latest = p.history[0] if p.history else None
+        result.append({
+            "id": p.id,
+            "url": p.url,
+            "name": p.name,
+            "store": p.store,
+            "image_url": p.imageUrl,
+            "current_price": latest.price if latest else None,
+            "in_stock": latest.inStock if latest else None,
+            "last_checked": latest.scrapedAt.isoformat() if latest and latest.scrapedAt else None,
+            "created_at": p.createdAt.isoformat() if p.createdAt else None,
+            "updated_at": p.updatedAt.isoformat() if p.updatedAt else None,
+        })
+    return {"total": len(result), "products": result}
+
+
+@app.delete("/product/{product_id}")
+async def remove_product(product_id: str):
+    """Remove um produto e seu histórico de preços do monitoramento."""
+    removed = delete_product(product_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+    return {"status": "ok", "deleted_id": product_id}
 
 
 @app.get("/")
@@ -50,19 +75,50 @@ async def health_check():
 @app.post("/monitor/add")
 async def add_product_to_monitor(payload: MonitorRequest):
     """Recebe uma nova URL para monitoramento e dispara a primeira verificação."""
+    clean_url = _normalize_url(payload.url)
+
     try:
-        detected_store = detect_store_from_url(payload.url)
+        detected_store = detect_store_from_url(clean_url)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    task = process_price_check.delay(payload.url, detected_store)
+    # Cria o produto imediatamente com os dados do SearchResult, antes do scraper rodar.
+    # Assim, mesmo que o scraper falhe, o produto aparece com nome e preço corretos.
+    if payload.name and len(payload.name.strip()) >= 3:
+        product = get_or_create_product(
+            url=clean_url,
+            name=payload.name,
+            store=detected_store,
+            image_url=payload.image_url,
+        )
+        # Se um preço conhecido foi passado, salva já como primeira entrada do histórico
+        if payload.price is not None and payload.price > 0:
+            add_price_history(
+                product_id=product.id,
+                price=payload.price,
+                in_stock=payload.in_stock,
+            )
+
+    task = process_price_check.delay(clean_url, detected_store, payload.name, payload.image_url)
     return {
         "message": "URL enviada para a fila de processamento",
         "task_id": task.id,
         "status": "queued",
-        "url": payload.url,
+        "url": clean_url,
         "store": detected_store,
     }
+
+
+@app.patch("/product/{product_id}/name")
+async def update_product_name_endpoint(product_id: str, payload: dict):
+    """Permite corrigir manualmente o nome de um produto."""
+    name = (payload.get("name") or "").strip()
+    if len(name) < 3:
+        raise HTTPException(status_code=400, detail="Nome deve ter ao menos 3 caracteres.")
+    updated = update_product_name(product_id, name)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+    return {"status": "ok", "id": product_id, "name": name}
 
 
 @app.get("/product/{product_id}/history")
@@ -141,5 +197,6 @@ def get_search_results_endpoint(search_id: str):
     return {
         "search_id": search_id,
         "total":     len(results),
-        "results":   [r.model_dump() for r in results],
+        # mode='json' garante que datetime (found_at) seja serializado como ISO string
+        "results":   [r.model_dump(mode="json") for r in results],
     }

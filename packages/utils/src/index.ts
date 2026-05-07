@@ -25,6 +25,7 @@ export function formatStore(store: string): string {
     mercadolivre: 'Mercado Livre',
     aliexpress: 'AliExpress',
     shopee: 'Shopee',
+    magalu: 'Magazine Luiza',
   };
   return map[store.toLowerCase()] ?? store;
 }

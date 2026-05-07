@@ -1,12 +1,8 @@
-import httpx
-from bs4 import BeautifulSoup
 import re
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept-Language": "pt-BR,pt;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-}
+from bs4 import BeautifulSoup
+
+from execution.scrapers.playwright_scraper import fetch_html_playwright
 
 
 def _parse_ml_price(item) -> float | None:
@@ -61,73 +57,76 @@ def _parse_ml_price(item) -> float | None:
 
 def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
     """
-    Busca produtos no Mercado Livre BR pela página de listagem.
+    Busca produtos no Mercado Livre BR usando Playwright (renderização completa).
+    O ML bloqueia httpx com uma página de anti-bot em JavaScript — Playwright
+    executa o JS e obtém os resultados reais.
+
     Retorna lista normalizada de dicts prontos para salvar via db_client.
     """
-    url = f"https://lista.mercadolivre.com.br/{query.replace(' ', '-')}"
+    # Remove caracteres especiais e normaliza para o formato esperado pelo ML
+    clean = re.sub(r"[^\w\s]", "", query.lower()).strip()
+    clean = re.sub(r"\s+", "-", clean)
+    url = f"https://lista.mercadolivre.com.br/{clean}"
+
+    html = fetch_html_playwright(url, wait_ms=3000)
+    if not html:
+        print(f"[mercadolivre_search] Playwright não retornou HTML para '{query}'")
+        return []
+
     results = []
+    soup  = BeautifulSoup(html, "lxml")
+    items = soup.select("li.ui-search-layout__item")
 
-    try:
-        with httpx.Client(timeout=20, headers=HEADERS, follow_redirects=True) as client:
-            response = client.get(url)
-            response.raise_for_status()
+    for item in items[:max_results]:
+        try:
+            link_el    = item.select_one("a.poly-component__title")
+            image_el   = item.select_one("img.poly-component__picture")
+            rating_el  = item.select_one("span.poly-reviews__rating")
+            reviews_el = item.select_one("span.poly-reviews__total")
 
-        soup  = BeautifulSoup(response.text, "lxml")
-        items = soup.select("li.ui-search-layout__item")
-
-        for item in items[:max_results]:
-            try:
-                link_el    = item.select_one("a.poly-component__title")
-                image_el   = item.select_one("img.poly-component__picture")
-                rating_el  = item.select_one("span.poly-reviews__rating")
-                reviews_el = item.select_one("span.poly-reviews__total")
-
-                if not link_el:
-                    continue
-
-                price = _parse_ml_price(item)
-
-                rating = None
-                if rating_el:
-                    try:
-                        rating = float(rating_el.get_text(strip=True).replace(",", "."))
-                    except Exception:
-                        pass
-
-                reviews = None
-                if reviews_el:
-                    try:
-                        reviews = int(
-                            re.sub(r"[^\d]", "", reviews_el.get_text(strip=True))
-                        )
-                    except Exception:
-                        pass
-
-                img_src = None
-                if image_el:
-                    img_src = (
-                        image_el.get("data-src")
-                        or image_el.get("src")
-                    )
-                    # Ignora placeholders (base64 ou tiny svg)
-                    if img_src and (img_src.startswith("data:") or len(img_src) < 20):
-                        img_src = None
-
-                results.append({
-                    "store":        "mercadolivre",
-                    "title":        link_el.get_text(strip=True),
-                    "product_url":  link_el.get("href", ""),
-                    "price":        price,
-                    "currency":     "BRL",
-                    "image_url":    img_src,
-                    "rating":       rating,
-                    "review_count": reviews,
-                })
-            except Exception:
+            if not link_el:
                 continue
 
-    except Exception as e:
-        print(f"[mercadolivre_search] Erro: {e}")
+            price = _parse_ml_price(item)
+
+            rating = None
+            if rating_el:
+                try:
+                    rating = float(rating_el.get_text(strip=True).replace(",", "."))
+                except Exception:
+                    pass
+
+            reviews = None
+            if reviews_el:
+                try:
+                    reviews = int(
+                        re.sub(r"[^\d]", "", reviews_el.get_text(strip=True))
+                    )
+                except Exception:
+                    pass
+
+            img_src = None
+            if image_el:
+                img_src = (
+                    image_el.get("data-src")
+                    or image_el.get("src")
+                )
+                # Ignora placeholders (base64 ou tiny svg)
+                if img_src and (img_src.startswith("data:") or len(img_src) < 20):
+                    img_src = None
+
+            results.append({
+                "store":        "mercadolivre",
+                "title":        link_el.get_text(strip=True),
+                "product_url":  link_el.get("href", ""),
+                "price":        price,
+                "currency":     "BRL",
+                "image_url":    img_src,
+                "rating":       rating,
+                "review_count": reviews,
+            })
+        except Exception:
+            continue
 
     print(f"[mercadolivre_search] {len(results)} resultados para '{query}'")
     return results

@@ -26,7 +26,7 @@ export function AddProductForm({ onSuccess }: AddProductFormProps) {
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
 
   const onSubmit = (data: FormValues) => {
-    mutate(data.url, {
+    mutate({ url: data.url }, {
       onSuccess: () => {
         reset();
         onSuccess?.();

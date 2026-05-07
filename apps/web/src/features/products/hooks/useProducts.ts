@@ -25,10 +25,42 @@ export function useAddProduct() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (url: string) => productsService.add(url),
+    mutationFn: (req: { url: string; name?: string; image_url?: string; price?: number | null; in_stock?: boolean }) =>
+      productsService.add(req),
     onSuccess: () => {
       // Produto criado em background pelo Celery — revalida após delay
       setTimeout(() => queryClient.invalidateQueries({ queryKey: productKeys.all }), 5_000);
     },
+  });
+}
+
+export function useRemoveProduct() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (productId: string) => productsService.remove(productId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: productKeys.all }),
+  });
+}
+
+export function useRescrapeProduct() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (url: string) => productsService.rescrape(url),
+    onSuccess: () => {
+      // Aguarda o Celery processar antes de revalidar
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: productKeys.all }), 8_000);
+    },
+  });
+}
+
+export function useUpdateProductName() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ productId, name }: { productId: string; name: string }) =>
+      productsService.updateName(productId, name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: productKeys.all }),
   });
 }

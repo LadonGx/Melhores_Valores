@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker-compose -f D:/Estudos/Melhores_Valores/docker-compose.yml restart worker)",
+      "Bash(docker exec price_tracker_worker:*)",
+      "Bash(curl -s http://localhost:8000/products)",
+      "Bash(python3 -c \" import sys, json d = json.load\\(sys.stdin\\) print\\('Total:', d['total']\\) for p in d['products'][:3]: print\\(f' [{p[\\\\\"store\\\\\"]}] {\\(p[\\\\\"name\\\\\"] or p[\\\\\"url\\\\\"]\\)[:50]} | price={p[\\\\\"current_price\\\\\"]} | in_stock={p[\\\\\"in_stock\\\\\"]}'\\) \")",
+      "Bash(python -c \" import sys, json data = open\\('nul'\\).read\\(\\) \")",
+      "Bash(pnpm build:*)"
+    ]
+  }
+}

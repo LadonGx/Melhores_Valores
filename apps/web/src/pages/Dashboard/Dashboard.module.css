@@ -4,6 +4,7 @@
   gap: 24px;
 }
 
+/* ─── Stats ─────────────────────────────────────────── */
 .stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -17,7 +18,7 @@
 }
 
 .statValue {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--color-text);
   line-height: 1;
@@ -37,25 +38,117 @@
   color: var(--color-primary);
 }
 
-.list {
-  list-style: none;
+/* ─── Grouping toolbar ───────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.toolbarInfo {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.toolbarActions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.nameInputRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex: 1;
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 160px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font-size: 13px;
+  outline: none;
+}
+
+.nameInput:focus {
+  border-color: var(--color-primary);
+}
+
+/* ─── Product list ──────────────────────────────────── */
+.productList {
   display: flex;
   flex-direction: column;
 }
 
-.listItem {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 0;
+.productRow {
   border-bottom: 1px solid var(--color-border);
+  transition: background 0.12s;
 }
 
-.listItem:last-child {
+.productRow:last-child {
   border-bottom: none;
 }
 
-.store {
+.productRow:hover:not(.rowDisabled) {
+  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+}
+
+.rowDisabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.rowSelectable {
+  cursor: pointer;
+}
+
+.rowSelected {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent) !important;
+}
+
+.productRowMain {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  user-select: none;
+}
+
+.checkbox {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.productThumb {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  flex-shrink: 0;
+}
+
+.productThumbPlaceholder {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  flex-shrink: 0;
+}
+
+.storeBadge {
   font-size: 11px;
   font-weight: 600;
   color: var(--color-primary);
@@ -66,18 +159,77 @@
   flex-shrink: 0;
 }
 
-.name {
-  font-size: 13px;
-  color: var(--color-text);
+.storeBadges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.listingCount {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: 4px;
+}
+
+.productInfo {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.productName {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.date {
+.lastChecked {
   font-size: 11px;
   color: var(--color-text-faint);
-  white-space: nowrap;
+}
+
+.productMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   flex-shrink: 0;
+}
+
+.currentPrice {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.lowestBadge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  padding: 3px 10px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.outOfStockBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  padding: 2px 6px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.detailHint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
 }
