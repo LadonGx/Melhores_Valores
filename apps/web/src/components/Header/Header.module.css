@@ -1,0 +1,43 @@
+.header {
+  height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.menuBtn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.menuBtn span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: var(--color-text-muted);
+  border-radius: 2px;
+  transition: background 0.15s;
+}
+
+.menuBtn:hover span {
+  background: var(--color-text);
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}

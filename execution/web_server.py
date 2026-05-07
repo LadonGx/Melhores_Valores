@@ -1,16 +1,45 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from .db_client import get_product_with_history, get_search_results
+from .db_client import get_all_products, get_product_with_history, get_search_results
 from .store_detection import detect_store_from_url
 from .worker_tasks import process_price_check, task_search_products
 
 app = FastAPI(title="Rastreador de Preços - API")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 
 class MonitorRequest(BaseModel):
     url: str
+
+
+@app.get("/products")
+async def list_products():
+    """Retorna todos os produtos cadastrados no banco."""
+    products = get_all_products()
+    return {
+        "total": len(products),
+        "products": [
+            {
+                "id": p.id,
+                "url": p.url,
+                "name": p.name,
+                "store": p.store,
+                "image_url": p.imageUrl,
+                "created_at": p.createdAt.isoformat() if p.createdAt else None,
+                "updated_at": p.updatedAt.isoformat() if p.updatedAt else None,
+            }
+            for p in products
+        ],
+    }
 
 
 @app.get("/")

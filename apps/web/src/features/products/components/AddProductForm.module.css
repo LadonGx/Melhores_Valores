@@ -1,0 +1,15 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.apiError {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.success {
+  font-size: 12px;
+  color: var(--color-success);
+}

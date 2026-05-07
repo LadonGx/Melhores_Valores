@@ -1,0 +1,13 @@
+{
+  "name": "melhores-valores",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @mv/web dev",
+    "build": "pnpm --filter @mv/web build",
+    "preview": "pnpm --filter @mv/web preview"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}
