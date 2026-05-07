@@ -43,10 +43,32 @@ def disconnect_db():
         logger.info("Encerrando conexão com o PostgreSQL...")
         db.disconnect()
 
+# Fragmentos que indicam erro de scraping (rate limit, bloqueio anti-bot, etc.)
+# Verificação por substring — qualquer nome que CONTENHA um desses fragmentos é descartado.
+_GARBAGE_FRAGMENTS = {
+    # Inglês
+    "rate limited", "access denied", "forbidden", "captcha",
+    "just a moment", "bot detected", "503 service", "429 too many",
+    "blocked", "unavailable", "cloudflare",
+    # Português
+    "acesso negado", "acesso bloqueado", "atenção", "você foi bloqueado",
+    "não é possível", "página não encontrada", "erro ao carregar",
+    "verificação de segurança", "robô", "bot detectado",
+}
+
+
+def _is_garbage_name(name: str | None) -> bool:
+    """Retorna True se o nome parece ser um erro de scraping."""
+    if not name or len(name.strip()) < 3:
+        return True
+    lower = name.strip().lower()
+    return any(fragment in lower for fragment in _GARBAGE_FRAGMENTS)
+
+
 def get_or_create_product(url: str, name: str = None, store: str = None, image_url: str = None) -> Product:
     """
     Busca um produto na tabela Product pela URL (única).
-    Se o produto não existir, realiza a criação com os dados fornecidos.
+    Se não existir, cria. Se existir com nome inválido (rate limit, erro), atualiza.
 
     Args:
         url (str): Link direto do produto no e-commerce.
@@ -60,7 +82,7 @@ def get_or_create_product(url: str, name: str = None, store: str = None, image_u
     connect_db()
     try:
         product = db.product.find_unique(where={"url": url})
-        
+
         if not product:
             logger.info(f"Novo produto detectado. Cadastrando URL: {url}")
             product = db.product.create(
@@ -68,13 +90,33 @@ def get_or_create_product(url: str, name: str = None, store: str = None, image_u
                     "url": url,
                     "name": name,
                     "imageUrl": image_url,
-                    "store": store or "unknown"
+                    "store": store or "unknown",
                 }
             )
+        elif name and not _is_garbage_name(name) and (
+            _is_garbage_name(product.name) or product.name is None
+        ):
+            # Atualiza nome nulo ou com erro (ex: "Rate Limited") para um nome real
+            logger.info(f"Atualizando nome '{product.name}' → '{name}' para {url}")
+            product = db.product.update(
+                where={"id": product.id},
+                data={"name": name, "imageUrl": image_url or product.imageUrl},
+            )
+
         return product
     except Exception as e:
         logger.error(f"Falha ao obter ou criar produto para url {url}: {e}")
         raise
+
+def update_product_name(product_id: str, name: str) -> Product | None:
+    """Atualiza manualmente o nome de um produto pelo ID."""
+    connect_db()
+    try:
+        return db.product.update(where={"id": product_id}, data={"name": name})
+    except Exception as e:
+        logger.error(f"Erro ao atualizar nome do produto {product_id}: {e}")
+        return None
+
 
 def add_price_history(product_id: str, price: Optional[float], in_stock: bool = True) -> PriceHistory:
     """
@@ -137,14 +179,41 @@ def get_product_with_history(product_id: str) -> dict:
         raise
 
 
-def get_all_products() -> list[Product]:
-    """Retorna todos os produtos cadastrados para agendamento em lote."""
+def get_all_products() -> list:
+    """Retorna todos os produtos com a última entrada de preço (para exibição no dashboard)."""
     connect_db()
     try:
-        return db.product.find_many()
+        return db.product.find_many(
+            order={"createdAt": "desc"},
+            include={
+                "history": {
+                    "order_by": {"scrapedAt": "desc"},
+                    "take": 1,
+                }
+            },
+        )
     except Exception as e:
-        logger.error(f"Erro ao buscar produtos para agendamento: {e}")
+        logger.error(f"Erro ao buscar produtos: {e}")
         raise
+
+
+def delete_product(product_id: str) -> bool:
+    """
+    Remove um produto e todo seu histórico de preços pelo ID.
+    O histórico é deletado em cascata pelo banco.
+
+    Returns:
+        True se deletado, False se não encontrado.
+    """
+    connect_db()
+    try:
+        db.pricehistory.delete_many(where={"productId": product_id})
+        deleted = db.product.delete(where={"id": product_id})
+        logger.info(f"Produto {product_id} removido com sucesso.")
+        return deleted is not None
+    except Exception as e:
+        logger.error(f"Erro ao deletar produto {product_id}: {e}")
+        return False
 
 
 # ─────────────────────────────────────────────

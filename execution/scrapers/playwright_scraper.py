@@ -1,21 +1,43 @@
 from playwright.sync_api import sync_playwright
 
+# Script executado antes de qualquer JS da página para ocultar sinais de automação
+_STEALTH_JS = """
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+Object.defineProperty(navigator, 'languages', { get: () => ['pt-BR', 'pt', 'en-US'] });
+window.chrome = { runtime: {} };
+"""
+
+
 def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
     """
     Nível 2 da cascata: renderização completa com Playwright.
     Usa domcontentloaded (mais rápido e confiável que networkidle) e aguarda
     um tempo fixo para execução de JS assíncrono após o carregamento inicial.
+
+    Inclui evasão básica de anti-bot: remove navigator.webdriver e outros
+    sinais de automação que sites como Magalu e Mercado Livre detectam.
     """
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                ],
+            )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 locale="pt-BR",
-                # Bloquear recursos desnecessários para acelerar carregamento
                 java_script_enabled=True,
+                viewport={"width": 1280, "height": 800},
             )
-            # Bloquear fontes, imagens e analytics para acelerar carregamento
+            # Injeta o script de evasão antes de qualquer JS da página
+            context.add_init_script(_STEALTH_JS)
+
+            # Bloquear fontes, imagens e media para acelerar carregamento
             def block_unnecessary(route):
                 if route.request.resource_type in ("image", "font", "media"):
                     route.abort()
@@ -26,8 +48,13 @@ def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
             page = context.new_page()
             # domcontentloaded: aguarda só o HTML/CSS, sem esperar requests assíncronos infinitos
             page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            # Aguarda JS renderizar o preço no DOM
+            # Aguarda JS renderizar o conteúdo no DOM
             page.wait_for_timeout(wait_ms)
+            # Garante que qualquer redirect JS já finalizou antes de extrair HTML
+            try:
+                page.wait_for_load_state("load", timeout=10000)
+            except Exception:
+                pass
             html = page.content()
             browser.close()
             return html

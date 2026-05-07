@@ -24,6 +24,11 @@ celerybeat-schedule.dir
 debug_scrapers.py
 .agents/
 
+# Frontend
+apps/web/dist/
+apps/web/.env
+*.tsbuildinfo
+
 # Others
 *.log
 .DS_Store
