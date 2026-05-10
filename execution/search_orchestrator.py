@@ -1,9 +1,9 @@
 import re
 import uuid
 
-from execution.search_scrapers.amazon_search       import search_amazon
-from execution.search_scrapers.mercadolivre_search import search_mercadolivre
-from execution.db_client                           import save_search_results
+from .search_scrapers.amazon_search       import search_amazon
+from .search_scrapers.mercadolivre_search import search_mercadolivre
+from .db_client                           import save_search_results
 
 # Magazine Luiza (shopee_search.py) está temporariamente desativado:
 # o site bloqueia IPs de datacenter independente de User-Agent ou Playwright.
@@ -18,7 +18,7 @@ _STOPWORDS = {
     "a", "as", "o", "os", "e", "é", "de", "do", "da", "dos", "das",
     "em", "no", "na", "nos", "nas", "um", "uma", "uns", "umas",
     "com", "por", "para", "que", "se", "ou", "ao", "aos", "at",
-    "vol", "volume", "the", "of", "in", "ed", "edicao", "edicão",
+    "vol", "volume", "the", "of", "in", "ed", "edicao", "edicao", "edição",
 }
 
 # Pontuação relevante mínima: 50% dos tokens da query devem aparecer no título

@@ -2,7 +2,7 @@ import re
 
 from bs4 import BeautifulSoup
 
-from execution.scrapers.playwright_scraper import fetch_html_playwright
+from ..scrapers.playwright_scraper import fetch_html_playwright
 
 
 def _parse_ml_price(item) -> float | None:

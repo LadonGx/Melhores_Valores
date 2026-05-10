@@ -3,12 +3,14 @@ import os
 from typing import Any
 
 from celery import Celery
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 from .adapters import normalize_store, parse_product_data
 from .cache_manager import get_cached_price, set_cached_price
 from .db_client import add_price_history, get_all_products, get_or_create_product
 from .scraping_orchestrator import scrape_product
+from .search_orchestrator import run_product_search
 
 load_dotenv()
 
@@ -25,6 +27,7 @@ def _build_success_payload(
     store: str,
     price: float,
     name: str | None,
+    in_stock: bool = True,
     product_id: str | None = None,
 ) -> dict[str, Any]:
     payload = {
@@ -34,6 +37,7 @@ def _build_success_payload(
         "store": store,
         "name": name,
         "price": float(price),
+        "in_stock": in_stock,
     }
     if product_id:
         payload["product_id"] = product_id
@@ -64,27 +68,34 @@ def run_price_pipeline(
     store: str,
     fallback_name: str | None = None,
     fallback_image: str | None = None,
+    skip_cache: bool = False,
 ) -> dict[str, Any]:
-    """Pipeline principal com integração real (Redis, Firecrawl e PostgreSQL)."""
+    """Pipeline principal com integração real (Redis, Firecrawl e PostgreSQL).
+
+    Args:
+        skip_cache: Se True, ignora o cache Redis e força um novo scraping.
+                    Deve ser True em refreshes manuais para garantir dados frescos.
+    """
     if not url or not isinstance(url, str):
         raise ValueError("'url' deve ser uma string não vazia.")
 
     normalized_store = normalize_store(store)
 
-    cached_payload = get_cached_price(url)
-    cached_price = cached_payload.get("price") if cached_payload else None
-    if cached_payload and isinstance(cached_price, (int, float)) and cached_price > 0:
-        # Aproveita o hit de cache mas garante nome correto no DB
-        cached_name = cached_payload.get("name")
-        best_name = cached_name if not _is_garbage_name(cached_name) else fallback_name
-        get_or_create_product(url=url, name=best_name, store=normalized_store, image_url=fallback_image)
-        return _build_success_payload(
-            source="cache",
-            url=url,
-            store=normalized_store,
-            price=float(cached_price),
-            name=best_name,
-        )
+    if not skip_cache:
+        cached_payload = get_cached_price(url)
+        cached_price = cached_payload.get("price") if cached_payload else None
+        if cached_payload and isinstance(cached_price, (int, float)) and cached_price > 0:
+            # Aproveita o hit de cache mas garante nome correto no DB
+            cached_name = cached_payload.get("name")
+            best_name = cached_name if not _is_garbage_name(cached_name) else fallback_name
+            get_or_create_product(url=url, name=best_name, store=normalized_store, image_url=fallback_image)
+            return _build_success_payload(
+                source="cache",
+                url=url,
+                store=normalized_store,
+                price=float(cached_price),
+                name=best_name,
+            )
 
     scrape_result = scrape_product(url, store=normalized_store)
     if not scrape_result:
@@ -104,8 +115,6 @@ def run_price_pipeline(
         source = "firecrawl"
     else:
         parsed_data = scrape_result
-        if "name" not in parsed_data and "title" in parsed_data:
-            parsed_data["name"] = parsed_data["title"]
         source = "cascata"
 
     product_name = parsed_data.get("name")
@@ -137,8 +146,10 @@ def run_price_pipeline(
             "reason": f"Preço inválido extraído: {product_price}. Possível bloqueio anti-bot.",
         }
 
+    in_stock = parsed_data.get("in_stock", True)
+
     product = get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
-    add_price_history(product_id=product.id, price=float(product_price))
+    add_price_history(product_id=product.id, price=float(product_price), in_stock=in_stock)
 
     set_cached_price(
         product_url=url,
@@ -154,6 +165,7 @@ def run_price_pipeline(
         store=normalized_store,
         name=product_name,
         price=float(product_price),
+        in_stock=in_stock,
         product_id=product.id,
     )
 
@@ -198,8 +210,12 @@ def schedule_all_products() -> dict[str, Any]:
     }
 
 
-# Importa o agendamento para que o Celery Beat o reconheça
-from . import scheduler
+app.conf.beat_schedule = {
+    "schedule-all-products-every-6-hours": {
+        "task": "execution.worker_tasks.schedule_all_products",
+        "schedule": crontab(minute=0, hour="*/6"),
+    }
+}
 
 
 # ─────────────────────────────────────────────
@@ -219,6 +235,5 @@ def task_search_products(self, query: str) -> str:
     Returns:
         search_id = self.request.id (mesmo ID retornado pelo POST /search).
     """
-    from execution.search_orchestrator import run_product_search
     return run_product_search(query, search_id=self.request.id)
 

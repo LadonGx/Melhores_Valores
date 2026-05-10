@@ -28,18 +28,21 @@ def extract_from_html(html: str) -> dict | None:
         title_elem = soup.select_one("h1[data-pl='product-title']")
         title = title_elem.get_text(strip=True) if title_elem else "Produto AliExpress"
         
-        price_elem = soup.select_one(".price--currentPriceText--V8_y_b5") or soup.select_one(".product-price-value")
+        price_elem = (
+            soup.select_one("[class*='currentPriceText']")
+            or soup.select_one("[class*='product-price-value']")
+        )
         if not price_elem:
             return None
-            
+
         price_str = price_elem.get_text(strip=True).replace("R$", "").replace(".", "").replace(",", ".").strip()
         price = float(price_str)
-        
-        img_elem = soup.select_one(".magnifier--image--1b7fXjT") or soup.select_one(".magnifier-image")
+
+        img_elem = soup.select_one("[class*='magnifier--image']") or soup.select_one(".magnifier-image")
         image_url = img_elem.get("src") if img_elem else None
         
         return {
-            "title": title,
+            "name": title,
             "price": price,
             "currency": "BRL",
             "image_url": image_url,

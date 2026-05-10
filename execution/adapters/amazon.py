@@ -103,7 +103,7 @@ def extract_from_html(html: str) -> dict | None:
         image_url = (image_el.get("src") or image_el.get("data-src")) if image_el else None
 
         return {
-            "title": title,
+            "name": title,
             "price": price,
             "currency": "BRL",
             "image_url": image_url,

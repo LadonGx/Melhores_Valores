@@ -1,8 +1,8 @@
-from execution.scrapers.base_scraper import fetch_html_simple
-from execution.scrapers.playwright_scraper import fetch_html_playwright
-from execution.firecrawl_api import scrape_product_data
-from execution.store_detection import detect_store_from_url as detect_store
-from execution.adapters import amazon, mercadolivre, aliexpress
+from .scrapers.base_scraper import fetch_html_simple
+from .scrapers.playwright_scraper import fetch_html_playwright
+from .firecrawl_api import scrape_product_data
+from .store_detection import detect_store_from_url as detect_store
+from .adapters import amazon, mercadolivre, aliexpress
 
 ADAPTERS = {
     "amazon": amazon.extract_from_html,

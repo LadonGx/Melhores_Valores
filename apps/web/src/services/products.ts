@@ -1,4 +1,4 @@
-import type { AddProductResponse, Product, ProductWithHistory } from '@mv/types';
+import type { AddProductResponse, Product, ProductWithHistory, RefreshPriceResponse } from '@mv/types';
 import { api } from './api';
 
 export const productsService = {
@@ -29,6 +29,16 @@ export const productsService = {
 
   rescrape: async (url: string): Promise<AddProductResponse> => {
     const { data } = await api.post<AddProductResponse>('/monitor/add', { url });
+    return data;
+  },
+
+  refreshPrice: async (productId: string): Promise<RefreshPriceResponse> => {
+    // Timeout de 60s — Playwright pode demorar até 30s em sites lentos
+    const { data } = await api.post<RefreshPriceResponse>(
+      `/product/${productId}/refresh`,
+      {},
+      { timeout: 60_000 },
+    );
     return data;
   },
 

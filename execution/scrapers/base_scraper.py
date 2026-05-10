@@ -1,6 +1,6 @@
-import httpx
-from bs4 import BeautifulSoup
 import random
+
+import httpx
 
 HEADERS_POOL = [
     {

@@ -112,7 +112,7 @@ def extract_from_html(html: str) -> dict | None:
         image_url = img_el.get("src") or img_el.get("data-zoom") if img_el else None
 
         return {
-            "title": title,
+            "name": title,
             "price": price,
             "currency": "BRL",
             "image_url": image_url,
