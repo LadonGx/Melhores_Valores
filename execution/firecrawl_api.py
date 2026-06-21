@@ -1,7 +1,10 @@
+import logging
 import os
 
 import httpx
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -41,5 +44,5 @@ def scrape_product_data(url: str):
         extracted = res_json.get("data", {}).get("extract", {})
         return {"data": {"metadata": extracted}}
     except httpx.HTTPError as e:
-        print(f"Erro no Firecrawl: {e}")
+        logger.error("Firecrawl | erro HTTP | url=%s | error=%s", url, e)
         return {}

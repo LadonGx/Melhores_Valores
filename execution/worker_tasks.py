@@ -8,7 +8,13 @@ from dotenv import load_dotenv
 
 from .adapters import normalize_store, parse_product_data
 from .cache_manager import get_cached_price, set_cached_price
-from .db_client import add_price_history, get_all_products, get_or_create_product
+from .db_client import (
+    add_price_history,
+    get_all_products,
+    get_last_valid_price_for_url,
+    get_or_create_product,
+    is_garbage_name as _is_garbage_name,
+)
 from .scraping_orchestrator import scrape_product
 from .search_orchestrator import run_product_search
 
@@ -44,23 +50,31 @@ def _build_success_payload(
     return payload
 
 
-# Fragmentos que indicam erro de scraping (substrings — inglês + português)
-_GARBAGE_NAME_FRAGMENTS = {
-    # Inglês
-    "rate limited", "access denied", "forbidden", "captcha",
-    "just a moment", "blocked", "unavailable", "cloudflare",
-    # Português
-    "acesso negado", "acesso bloqueado", "atenção", "você foi bloqueado",
-    "não é possível", "página não encontrada", "verificação de segurança",
-    "robô", "bot detectado",
-}
+# Maximum ratio between new price and last known price before flagging as anomalous.
+# A 3x jump (e.g. R$100 → R$300 or R$300 → R$100) is treated as suspicious.
+_PRICE_JUMP_FACTOR = 3.0
 
 
-def _is_garbage_name(name: str | None) -> bool:
-    if not name or len(name.strip()) < 3:
-        return True
-    lower = name.strip().lower()
-    return any(g in lower for g in _GARBAGE_NAME_FRAGMENTS)
+def _passes_sanity_check(url: str, new_price: float) -> bool:
+    """
+    Returns False if the new price deviates suspiciously from the last known price.
+    Always returns True for new products (no history yet).
+    Non-blocking: DB errors default to True so the pipeline never stalls.
+    """
+    try:
+        last = get_last_valid_price_for_url(url)
+        if last is None or last <= 0:
+            return True
+        ratio = new_price / last
+        if ratio > _PRICE_JUMP_FACTOR or ratio < (1.0 / _PRICE_JUMP_FACTOR):
+            logger.warning(
+                "Sanity check: preço %.2f diverge %.1fx do último válido %.2f | url=%s",
+                new_price, ratio, last, url,
+            )
+            return False
+    except Exception:
+        logger.exception("Sanity check falhou com exceção; aceitando preço | url=%s", url)
+    return True
 
 
 def run_price_pipeline(
@@ -145,6 +159,29 @@ def run_price_pipeline(
             "store": normalized_store,
             "reason": f"Preço inválido extraído: {product_price}. Possível bloqueio anti-bot.",
         }
+
+    confidence = parsed_data.get("confidence_score", 1.0)
+    if not _passes_sanity_check(url, float(product_price)):
+        # Price jump detected. Only block the save when confidence is also low;
+        # if the extractor is confident, the jump may be genuine (flash sale, restock).
+        if confidence < 0.75:
+            logger.warning(
+                "Preço bloqueado por sanity check + baixa confiança | "
+                "price=%.2f confidence=%.2f | url=%s",
+                product_price, confidence, url,
+            )
+            if product_name:
+                get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
+            return {
+                "status": "error",
+                "url": url,
+                "store": normalized_store,
+                "reason": f"Preço {product_price} diverge do histórico e confiança é baixa ({confidence:.2f}). Não salvo.",
+            }
+        logger.warning(
+            "Sanity check falhou mas confidence alta (%.2f) — salvando mesmo assim | url=%s",
+            confidence, url,
+        )
 
     in_stock = parsed_data.get("in_stock", True)
 

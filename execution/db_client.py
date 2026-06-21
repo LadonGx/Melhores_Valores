@@ -59,6 +59,10 @@ def _is_garbage_name(name: str | None) -> bool:
     return any(fragment in lower for fragment in _GARBAGE_FRAGMENTS)
 
 
+# Public alias — import this in other modules instead of duplicating the logic
+is_garbage_name = _is_garbage_name
+
+
 def get_or_create_product(url: str, name: str | None = None, store: str | None = None, image_url: str | None = None) -> Product:
     """
     Busca um produto na tabela Product pela URL (única).
@@ -256,6 +260,30 @@ def save_search_results(search_id: str, query: str, results: list[dict]) -> int:
             logger.error(f"[db_client] Erro ao salvar SearchResult: {e}")
             continue
     return saved
+
+
+def get_last_valid_price_for_url(url: str) -> float | None:
+    """
+    Returns the most recent positive price recorded for a product URL.
+    Used by worker_tasks for sanity-checking new scraped prices.
+    Returns None if the product is new or has no price history.
+    """
+    connect_db()
+    try:
+        product = db.product.find_unique(where={"url": url})
+        if not product:
+            return None
+        entries = db.pricehistory.find_many(
+            where={"productId": product.id, "inStock": True},
+            order_by={"scrapedAt": "desc"},
+            take=1,
+        )
+        if entries and entries[0].price and entries[0].price > 0:
+            return entries[0].price
+        return None
+    except Exception as e:
+        logger.error("Erro ao buscar último preço para sanity check | url=%s | %s", url, e)
+        return None
 
 
 def get_search_results(search_id: str) -> list:

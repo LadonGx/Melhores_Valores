@@ -1,4 +1,8 @@
+import logging
+
 from playwright.sync_api import sync_playwright
+
+logger = logging.getLogger(__name__)
 
 # Script executado antes de qualquer JS da página para ocultar sinais de automação
 _STEALTH_JS = """
@@ -59,5 +63,5 @@ def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
             browser.close()
             return html
     except Exception as e:
-        print(f"[playwright_scraper] Falhou para {url}: {e}")
+        logger.warning("playwright_scraper | falhou | url=%s | error=%s", url, e)
         return None
