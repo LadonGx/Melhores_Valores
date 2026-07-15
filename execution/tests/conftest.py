@@ -9,9 +9,9 @@ import sys
 from unittest.mock import MagicMock
 
 # Stub playwright before any module imports it
-#playwright_stub = MagicMock()
-#sys.modules["playwright"] = playwright_stub
-#sys.modules["playwright.sync_api"] = playwright_stub
+playwright_stub = MagicMock()
+sys.modules["playwright"] = playwright_stub
+sys.modules["playwright.sync_api"] = playwright_stub
 
 # Stub prisma (DB layer) — DB calls are mocked per-test anyway
 prisma_stub = MagicMock()
