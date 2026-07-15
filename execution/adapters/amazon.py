@@ -57,29 +57,45 @@ def _parse_price_text(text: str) -> float | None:
 def _extract_price_from_soup(soup) -> tuple[float | None, str, float]:
     """
     Returns (price, selector_used, confidence_score).
-    Never returns crossed-out prices or installment blocks.
+    Never returns crossed-out prices, "was" prices, or installment blocks.
     """
-    # Strategy 1: span.a-offscreen inside non-struck span.a-price — canonical purchase price
+    # Strategy 0: span.priceToPay / apexPriceToPay — explicit "price you pay" class.
+    # Amazon uses this for sale prices AND regular prices on modern pages.
+    # Must run before Strategy 1 to catch discounted prices correctly.
+    for cls in ("span.priceToPay", "span.apexPriceToPay"):
+        pay_el = soup.select_one(cls)
+        if pay_el:
+            offscreen = pay_el.select_one("span.a-offscreen")
+            if offscreen:
+                val = _parse_price_text(offscreen.get_text(strip=True))
+                if val:
+                    return val, f"{cls} span.a-offscreen", 0.96
+
+    # Strategy 1: span.a-offscreen inside non-struck, non-"was" span.a-price
+    # Skip a-text-strike (strikethrough) AND a-text-price (Amazon's "was price" grey text)
     for price_span in soup.select("span.a-price"):
-        if "a-text-strike" in price_span.get("class", []):
-            continue  # skip the "from" / original price
+        classes = price_span.get("class", [])
+        if "a-text-strike" in classes or "a-text-price" in classes:
+            continue  # skip the "from" / original / "was" price
         offscreen = price_span.select_one("span.a-offscreen")
         if offscreen:
             val = _parse_price_text(offscreen.get_text(strip=True))
             if val:
-                return val, "span.a-price:not(.a-text-strike) > span.a-offscreen", 0.92
+                return val, "span.a-price:not(.a-text-strike):not(.a-text-price) > span.a-offscreen", 0.92
 
     # Strategy 2: #corePrice_feature_div — primary product price container
     core = soup.select_one("#corePrice_feature_div")
     if core:
-        offscreen = core.select_one("span.a-offscreen")
-        if offscreen:
-            val = _parse_price_text(offscreen.get_text(strip=True))
-            if val:
-                return val, "#corePrice_feature_div span.a-offscreen", 0.88
+        # Prefer the first non-struck offscreen inside the core price div
+        for offscreen in core.select("span.a-offscreen"):
+            parent = offscreen.parent
+            if parent and "a-text-strike" not in parent.get("class", []):
+                val = _parse_price_text(offscreen.get_text(strip=True))
+                if val:
+                    return val, "#corePrice_feature_div span.a-offscreen", 0.88
 
-    # Strategy 3: legacy price block IDs (older product pages)
-    for price_id in ("#priceblock_ourprice", "#priceblock_dealprice", "#price_inside_buybox"):
+    # Strategy 3: legacy price block IDs and deal price (older product pages)
+    for price_id in ("#priceblock_dealprice", "#priceblock_ourprice", "#price_inside_buybox"):
         el = soup.select_one(price_id)
         if el:
             val = _parse_price_text(el.get_text(strip=True))
@@ -87,17 +103,20 @@ def _extract_price_from_soup(soup) -> tuple[float | None, str, float]:
                 return val, price_id, 0.82
 
     # Strategy 4: whole + fraction split (more error-prone, lower confidence)
-    whole_el = soup.select_one("span.a-price:not(.a-text-strike) span.a-price-whole")
-    if whole_el:
-        try:
-            whole = re.sub(r"[^\d]", "", whole_el.get_text(strip=True))
-            frac_el = soup.select_one("span.a-price:not(.a-text-strike) span.a-price-fraction")
-            frac = re.sub(r"[^\d]", "", frac_el.get_text(strip=True)) if frac_el else "00"
-            val = float(f"{whole}.{frac or '00'}")
-            if val > 0:
-                return val, "span.a-price-whole + span.a-price-fraction", 0.72
-        except (ValueError, TypeError):
-            pass
+    for price_span in soup.select("span.a-price"):
+        if "a-text-strike" in price_span.get("class", []) or "a-text-price" in price_span.get("class", []):
+            continue
+        whole_el = price_span.select_one("span.a-price-whole")
+        if whole_el:
+            try:
+                whole = re.sub(r"[^\d]", "", whole_el.get_text(strip=True))
+                frac_el = price_span.select_one("span.a-price-fraction")
+                frac = re.sub(r"[^\d]", "", frac_el.get_text(strip=True)) if frac_el else "00"
+                val = float(f"{whole}.{frac or '00'}")
+                if val > 0:
+                    return val, "span.a-price-whole + span.a-price-fraction", 0.72
+            except (ValueError, TypeError):
+                pass
 
     return None, "", 0.0
 
@@ -132,10 +151,7 @@ def extract_from_html(html: str) -> dict | None:
 
     try:
         price, selector_used, confidence = _extract_price_from_soup(soup)
-
-        if price is None:
-            logger.info("Amazon | preço não encontrado em nenhum seletor")
-            return None
+        in_stock = not _is_out_of_stock(soup)
 
         title_el = soup.select_one("#productTitle")
         title = title_el.get_text(strip=True) if title_el else None
@@ -143,7 +159,22 @@ def extract_from_html(html: str) -> dict | None:
         image_el = soup.select_one("#landingImage") or soup.select_one("#imgBlkFront")
         image_url = (image_el.get("src") or image_el.get("data-src")) if image_el else None
 
-        in_stock = not _is_out_of_stock(soup)
+        if price is None:
+            if not in_stock:
+                # Page explicitly confirms unavailability — propagate so history records it
+                logger.info("Amazon | produto fora de estoque sem preço exibido | url implícita")
+                return {
+                    "name": title,
+                    "price": None,
+                    "currency": "BRL",
+                    "image_url": image_url,
+                    "in_stock": False,
+                    "selector_used": "",
+                    "confidence_score": 0.75,
+                    "block_category": None,
+                }
+            logger.info("Amazon | preço não encontrado em nenhum seletor")
+            return None
 
         logger.debug(
             "Amazon | price=%.2f selector=%s confidence=%.2f in_stock=%s",

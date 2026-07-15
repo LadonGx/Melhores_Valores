@@ -89,6 +89,23 @@ def _extract_price_from_soup(soup) -> tuple[float | None, str, float]:
     return None, "", 0.0
 
 
+_OUT_OF_STOCK_SIGNALS = (
+    "this item is no longer available",
+    "item unavailable",
+    "product unavailable",
+    "sold out",
+    "esgotado",
+    "indisponível",
+    "not available",
+)
+
+
+def _is_out_of_stock(soup) -> bool:
+    """Returns True if the AliExpress page explicitly indicates the product is unavailable."""
+    text = soup.get_text(strip=True).lower()[:1000]
+    return any(kw in text for kw in _OUT_OF_STOCK_SIGNALS)
+
+
 def extract_from_html(html: str) -> dict | None:
     """
     Parses raw HTML from an AliExpress product page.
@@ -113,8 +130,21 @@ def extract_from_html(html: str) -> dict | None:
         title = title_el.get_text(strip=True) if title_el else None
 
         price, selector_used, confidence = _extract_price_from_soup(soup)
+        in_stock = not _is_out_of_stock(soup)
 
         if price is None:
+            if not in_stock:
+                logger.info("AliExpress | produto fora de estoque sem preço exibido")
+                return {
+                    "name": title,
+                    "price": None,
+                    "currency": "BRL",
+                    "image_url": None,
+                    "in_stock": False,
+                    "selector_used": "",
+                    "confidence_score": 0.75,
+                    "block_category": None,
+                }
             logger.info("AliExpress | preço não encontrado em nenhum seletor")
             return None
 
@@ -125,8 +155,8 @@ def extract_from_html(html: str) -> dict | None:
         image_url = img_el.get("src") if img_el else None
 
         logger.debug(
-            "AliExpress | price=%.2f selector=%s confidence=%.2f",
-            price, selector_used, confidence,
+            "AliExpress | price=%.2f selector=%s confidence=%.2f in_stock=%s",
+            price, selector_used, confidence, in_stock,
         )
 
         return {
@@ -134,7 +164,7 @@ def extract_from_html(html: str) -> dict | None:
             "price": price,
             "currency": "BRL",
             "image_url": image_url,
-            "in_stock": True,
+            "in_stock": in_stock,
             "selector_used": selector_used,
             "confidence_score": confidence,
             "block_category": None,

@@ -52,13 +52,29 @@ def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
             page = context.new_page()
             # domcontentloaded: aguarda só o HTML/CSS, sem esperar requests assíncronos infinitos
             page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            # Aguarda JS renderizar o conteúdo no DOM
+            # Aguarda JS renderizar o conteúdo no DOM (baseline)
             page.wait_for_timeout(wait_ms)
             # Garante que qualquer redirect JS já finalizou antes de extrair HTML
             try:
                 page.wait_for_load_state("load", timeout=10000)
             except Exception:
                 pass
+            # Aguarda um elemento de preço aparecer no DOM (útil para páginas de catálogo
+            # com preço renderizado por componentes assíncronos como ML /p/ e /up/).
+            # Se não aparecer em 5s, extrai o que já estiver disponível.
+            _PRICE_SELECTORS = (
+                "meta[itemprop='price']",
+                "span.priceToPay",
+                "span.a-offscreen",
+                ".ui-pdp-price__second-line",
+                "[class*='currentPriceText']",
+            )
+            for sel in _PRICE_SELECTORS:
+                try:
+                    page.wait_for_selector(sel, timeout=5000)
+                    break
+                except Exception:
+                    continue
             html = page.content()
             browser.close()
             return html

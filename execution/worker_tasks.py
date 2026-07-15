@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from celery import Celery
 from celery.schedules import crontab
@@ -93,6 +94,12 @@ def run_price_pipeline(
     if not url or not isinstance(url, str):
         raise ValueError("'url' deve ser uma string não vazia.")
 
+    # Strip URL fragments (e.g. #polycard_client=...&tracking_id=...) — they break scraping
+    parsed = urlparse(url)
+    if parsed.fragment:
+        url = urlunparse(parsed._replace(fragment=""))
+        logger.info("URL normalizada: fragment removido | url=%s", url)
+
     normalized_store = normalize_store(store)
 
     if not skip_cache:
@@ -113,9 +120,9 @@ def run_price_pipeline(
 
     scrape_result = scrape_product(url, store=normalized_store)
     if not scrape_result:
-        # Sem scrape: ainda garante produto no DB com nome de fallback
-        if fallback_name:
-            get_or_create_product(url=url, name=fallback_name, store=normalized_store, image_url=fallback_image)
+        # Todos os níveis da cascata falharam — garante produto no DB e registra tentativa
+        product = get_or_create_product(url=url, name=fallback_name, store=normalized_store, image_url=fallback_image)
+        add_price_history(product_id=product.id, price=None, in_stock=False)
         return {
             "status": "error",
             "url": url,
@@ -142,17 +149,28 @@ def run_price_pipeline(
         product_image = fallback_image
 
     product_price = parsed_data.get("price")
+    in_stock = parsed_data.get("in_stock", True)
 
     if not isinstance(product_price, (int, float)) or product_price <= 0:
+        product = get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
+        if not in_stock:
+            # Confirmado fora de estoque pelo adapter — registra no histórico
+            logger.info(
+                "Produto confirmado fora de estoque sem preço | url=%s store=%s", url, normalized_store
+            )
+            add_price_history(product_id=product.id, price=None, in_stock=False)
+            return {
+                "status": "out_of_stock",
+                "url": url,
+                "store": normalized_store,
+                "reason": "Produto fora de estoque.",
+            }
         logger.warning(
             "Preço inválido extraído (%.2f) para url=%s store=%s. Abortando salvamento.",
             product_price or 0,
             url,
             normalized_store,
         )
-        # Mesmo sem preço, cria/corrige o produto no DB com nome correto
-        if product_name:
-            get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
         return {
             "status": "error",
             "url": url,
@@ -182,8 +200,6 @@ def run_price_pipeline(
             "Sanity check falhou mas confidence alta (%.2f) — salvando mesmo assim | url=%s",
             confidence, url,
         )
-
-    in_stock = parsed_data.get("in_stock", True)
 
     product = get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
     add_price_history(product_id=product.id, price=float(product_price), in_stock=in_stock)

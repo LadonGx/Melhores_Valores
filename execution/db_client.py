@@ -275,7 +275,7 @@ def get_last_valid_price_for_url(url: str) -> float | None:
             return None
         entries = db.pricehistory.find_many(
             where={"productId": product.id, "inStock": True},
-            order_by={"scrapedAt": "desc"},
+            order={"scrapedAt": "desc"},
             take=1,
         )
         if entries and entries[0].price and entries[0].price > 0:

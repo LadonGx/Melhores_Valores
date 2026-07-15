@@ -104,6 +104,18 @@ def _parse_price_from_soup(soup) -> tuple[float | None, str, float]:
     return None, "", 0.0
 
 
+def _is_out_of_stock(soup) -> bool:
+    """Returns True if the MercadoLivre page explicitly indicates unavailability."""
+    if soup.select_one(".ui-pdp-buybox--unavailable, .ui-pdp-container--unavailable"):
+        return True
+    stock_el = soup.select_one(".ui-pdp-stock-information, .ui-pdp-buybox__quantity")
+    if stock_el:
+        text = stock_el.get_text(strip=True).lower()
+        if any(kw in text for kw in ("sem estoque", "indisponível", "sem unidades")):
+            return True
+    return False
+
+
 def extract_from_html(html: str) -> dict | None:
     """
     Parses raw HTML from a Mercado Livre product page.
@@ -132,8 +144,21 @@ def extract_from_html(html: str) -> dict | None:
         title = title_el.get_text(strip=True) if title_el else None
 
         price, selector_used, confidence = _parse_price_from_soup(soup)
+        in_stock = not _is_out_of_stock(soup)
 
         if price is None:
+            if not in_stock:
+                logger.info("MercadoLivre | produto fora de estoque sem preço exibido")
+                return {
+                    "name": title,
+                    "price": None,
+                    "currency": "BRL",
+                    "image_url": None,
+                    "in_stock": False,
+                    "selector_used": "",
+                    "confidence_score": 0.75,
+                    "block_category": None,
+                }
             logger.info("MercadoLivre | preço não encontrado com seletores específicos")
             return None
 
@@ -144,8 +169,8 @@ def extract_from_html(html: str) -> dict | None:
         image_url = (img_el.get("src") or img_el.get("data-zoom")) if img_el else None
 
         logger.debug(
-            "MercadoLivre | price=%.2f selector=%s confidence=%.2f",
-            price, selector_used, confidence,
+            "MercadoLivre | price=%.2f selector=%s confidence=%.2f in_stock=%s",
+            price, selector_used, confidence, in_stock,
         )
 
         return {
@@ -153,7 +178,7 @@ def extract_from_html(html: str) -> dict | None:
             "price": price,
             "currency": "BRL",
             "image_url": image_url,
-            "in_stock": True,
+            "in_stock": in_stock,
             "selector_used": selector_used,
             "confidence_score": confidence,
             "block_category": None,

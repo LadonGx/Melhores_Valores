@@ -53,12 +53,20 @@ def _log_cascade_result(level: int, store: str, result: dict | None, url: str) -
 
 
 def _result_is_acceptable(result: dict | None) -> bool:
-    """True if the result has a valid price with sufficient confidence."""
+    """True if the result has a valid price, or explicitly confirms out-of-stock."""
     if not result:
         return False
+    # Confirmed out-of-stock: stop the cascade so we don't burn Firecrawl credits
+    if result.get("in_stock") is False and result.get("confidence_score", 0.0) >= _CONFIDENCE_ACCEPT:
+        return True
     if result.get("price") is None:
         return False
     return result.get("confidence_score", 0.0) >= _CONFIDENCE_ACCEPT
+
+
+# Block categories where Firecrawl escalation is pointless.
+# login_wall / access_denied require authentication that Firecrawl cannot provide.
+_NO_FIRECRAWL_BLOCKS = {"login_wall", "access_denied"}
 
 
 def scrape_product(url: str, store: str = None) -> dict | None:
@@ -70,6 +78,8 @@ def scrape_product(url: str, store: str = None) -> dict | None:
 
     Each level stops the cascade when it returns a result with confidence >= _CONFIDENCE_ACCEPT.
     Low-confidence results escalate to the next level for a better extraction attempt.
+    Firecrawl is skipped when Level 2 confirms a login_wall or access_denied block
+    (authentication blocks cannot be resolved by a different scraping service).
     """
     if not store:
         store = detect_store(url)
@@ -97,6 +107,13 @@ def scrape_product(url: str, store: str = None) -> dict | None:
         _log_cascade_result(2, store, result, url)
         if _result_is_acceptable(result):
             return result
+        # Authentication blocks cannot be solved by Firecrawl — skip to save credits
+        if result and result.get("block_category") in _NO_FIRECRAWL_BLOCKS:
+            logger.warning(
+                "Bloqueio '%s' no nível 2 — Firecrawl não ajudaria, cancelando | store=%s | url=%s",
+                result["block_category"], store, url,
+            )
+            return None
 
     # --- Level 3: Firecrawl API (paid — last resort) ---
     logger.warning(
