@@ -120,9 +120,11 @@ def run_price_pipeline(
 
     scrape_result = scrape_product(url, store=normalized_store)
     if not scrape_result:
-        # Todos os níveis da cascata falharam — garante produto no DB e registra tentativa
-        product = get_or_create_product(url=url, name=fallback_name, store=normalized_store, image_url=fallback_image)
-        add_price_history(product_id=product.id, price=None, in_stock=False)
+        # Todos os níveis da cascata falharam por motivo técnico (timeout, bloqueio,
+        # Firecrawl indisponível, etc.) — nenhum adapter confirmou indisponibilidade,
+        # então não grava histórico (evita marcar o produto como "fora de estoque"
+        # por uma falha passageira). Só garante que o produto exista no DB.
+        get_or_create_product(url=url, name=fallback_name, store=normalized_store, image_url=fallback_image)
         return {
             "status": "error",
             "url": url,

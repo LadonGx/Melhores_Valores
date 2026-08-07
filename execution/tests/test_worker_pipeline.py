@@ -105,7 +105,10 @@ class TestSuccessfulScrape:
 # ─── Failure and out-of-stock paths ───────────────────────────────────────────
 
 class TestFailureAndOutOfStock:
-    def test_cascade_failure_records_history_entry(self):
+    def test_cascade_failure_does_not_touch_history(self):
+        """A technical extraction failure (timeout, block, etc.) must not be
+        recorded as 'out of stock' — no adapter ever confirmed unavailability,
+        so the price history should be left untouched."""
         product = _make_product()
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
              patch(MOCK_PATCHES["scrape"], return_value=None), \
@@ -114,7 +117,7 @@ class TestFailureAndOutOfStock:
              patch(MOCK_PATCHES["is_garbage"], return_value=False):
             result = run_price_pipeline("https://amazon.com.br/dp/test", "amazon", fallback_name="Produto Teste")
             assert result["status"] == "error"
-            mock_history.assert_called_once_with(product_id="prod-1", price=None, in_stock=False)
+            mock_history.assert_not_called()
 
     def test_out_of_stock_confirmed_records_history(self):
         product = _make_product()
