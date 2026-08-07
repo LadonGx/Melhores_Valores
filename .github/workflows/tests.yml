@@ -17,8 +17,8 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
 
       - run: prisma generate
 
-      - run: pytest execution/tests -v
+      - run: python -m pytest execution/tests -v

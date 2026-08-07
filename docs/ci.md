@@ -34,6 +34,12 @@ O `Dockerfile` de produção usa `python:3.11-slim` e o `pyrightconfig.json` fix
 
 Only o que foi pedido — sem lint, build ou deploy. `push` direto para `main` normalmente já passou por um PR revisado, então não foi adicionado (mantém o escopo mínimo pedido).
 
+### 7. `requirements-dev.txt` separado — correção pós primeira execução real
+
+Primeira execução no GitHub Actions falhou com `pytest: command not found` (exit 127). Causa: `pytest` nunca esteve listado em `requirements.txt` — só existia instalado manualmente no `venv/` local do desenvolvedor, fora de qualquer arquivo de dependências rastreado. `pip install -r requirements.txt` no runner, portanto, nunca instalava o `pytest`.
+
+**Correção:** `requirements-dev.txt` novo na raiz, com `pytest==9.1.1` (versão já em uso localmente). Separado de `requirements.txt` de propósito — este último também alimenta o `Dockerfile` da imagem de produção (`RUN pip install -r requirements.txt`), e dependência de teste não deveria inflar essa imagem. O workflow agora instala os dois arquivos e chama `python -m pytest` (em vez de `pytest` puro) para usar explicitamente o interpretador configurado pelo `actions/setup-python`, evitando problemas de `PATH`.
+
 ## Workflow
 
 Arquivo: `.github/workflows/tests.yml`
@@ -58,11 +64,11 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
 
       - run: prisma generate
 
-      - run: pytest execution/tests -v
+      - run: python -m pytest execution/tests -v
 ```
 
 ## Validação local
@@ -71,7 +77,7 @@ Passos simulados manualmente antes de finalizar (sem Docker, replicando o que o 
 
 ```bash
 DATABASE_URL="postgresql://ci:ci@localhost:5432/ci_dummy" prisma generate
-pytest execution/tests -v
+python -m pytest execution/tests -v
 ```
 
 Resultado: `prisma generate` completou sem erro (não exige banco alcançável) e os 76 testes de `execution/tests/` passaram.
