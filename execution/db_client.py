@@ -28,15 +28,6 @@ def connect_db():
             
         db.connect()
 
-def disconnect_db():
-    """
-    Encerra a conexão com o banco de dados.
-    Deve ser chamado no shutdown do servidor ou worker para liberar recursos.
-    """
-    if db.is_connected():
-        logger.info("Encerrando conexão com o PostgreSQL...")
-        db.disconnect()
-
 # Fragmentos que indicam erro de scraping (rate limit, bloqueio anti-bot, etc.)
 # Verificação por substring — qualquer nome que CONTENHA um desses fragmentos é descartado.
 _GARBAGE_FRAGMENTS = {
