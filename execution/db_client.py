@@ -1,21 +1,15 @@
 import logging
-from typing import Optional
+import sys
+
 from dotenv import load_dotenv
 from prisma import Prisma
 from prisma.models import Product, PriceHistory
 
-# Carrega variáveis de ambiente (.env) para o Prisma localizar o DATABASE_URL
 load_dotenv()
 
-# Configuração de logging para a camada de execução
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Instância global do cliente Prisma.
-# Como o gerador foi configurado com interface = "sync", as chamadas serão bloqueantes (síncronas).
 db = Prisma()
-
-import sys
 
 def connect_db():
     """
@@ -33,15 +27,6 @@ def connect_db():
             sys.stderr.fileno = lambda: 2
             
         db.connect()
-
-def disconnect_db():
-    """
-    Encerra a conexão com o banco de dados.
-    Deve ser chamado no shutdown do servidor ou worker para liberar recursos.
-    """
-    if db.is_connected():
-        logger.info("Encerrando conexão com o PostgreSQL...")
-        db.disconnect()
 
 # Fragmentos que indicam erro de scraping (rate limit, bloqueio anti-bot, etc.)
 # Verificação por substring — qualquer nome que CONTENHA um desses fragmentos é descartado.
@@ -65,7 +50,11 @@ def _is_garbage_name(name: str | None) -> bool:
     return any(fragment in lower for fragment in _GARBAGE_FRAGMENTS)
 
 
-def get_or_create_product(url: str, name: str = None, store: str = None, image_url: str = None) -> Product:
+# Public alias — import this in other modules instead of duplicating the logic
+is_garbage_name = _is_garbage_name
+
+
+def get_or_create_product(url: str, name: str | None = None, store: str | None = None, image_url: str | None = None) -> Product:
     """
     Busca um produto na tabela Product pela URL (única).
     Se não existir, cria. Se existir com nome inválido (rate limit, erro), atualiza.
@@ -108,6 +97,16 @@ def get_or_create_product(url: str, name: str = None, store: str = None, image_u
         logger.error(f"Falha ao obter ou criar produto para url {url}: {e}")
         raise
 
+def get_product_by_id(product_id: str) -> Product | None:
+    """Retorna um produto pelo ID, ou None se não existir."""
+    connect_db()
+    try:
+        return db.product.find_unique(where={"id": product_id})
+    except Exception as e:
+        logger.error(f"Erro ao buscar produto {product_id}: {e}")
+        return None
+
+
 def update_product_name(product_id: str, name: str) -> Product | None:
     """Atualiza manualmente o nome de um produto pelo ID."""
     connect_db()
@@ -118,7 +117,7 @@ def update_product_name(product_id: str, name: str) -> Product | None:
         return None
 
 
-def add_price_history(product_id: str, price: Optional[float], in_stock: bool = True) -> PriceHistory:
+def add_price_history(product_id: str, price: float | None, in_stock: bool = True) -> PriceHistory:
     """
     Registra uma nova entrada de preço para um produto específico.
 
@@ -161,9 +160,7 @@ def get_product_with_history(product_id: str) -> dict:
             where={"id": product_id},
             include={
                 "history": {
-                    "order_by": {
-                        "scrapedAt": "desc"
-                    }
+                    "order_by": {"scrapedAt": "desc"},
                 }
             }
         )
@@ -189,7 +186,7 @@ def get_all_products() -> list:
                 "history": {
                     "order_by": {"scrapedAt": "desc"},
                     "take": 1,
-                }
+                },
             },
         )
     except Exception as e:
@@ -254,6 +251,30 @@ def save_search_results(search_id: str, query: str, results: list[dict]) -> int:
             logger.error(f"[db_client] Erro ao salvar SearchResult: {e}")
             continue
     return saved
+
+
+def get_last_valid_price_for_url(url: str) -> float | None:
+    """
+    Returns the most recent positive price recorded for a product URL.
+    Used by worker_tasks for sanity-checking new scraped prices.
+    Returns None if the product is new or has no price history.
+    """
+    connect_db()
+    try:
+        product = db.product.find_unique(where={"url": url})
+        if not product:
+            return None
+        entries = db.pricehistory.find_many(
+            where={"productId": product.id, "inStock": True},
+            order={"scrapedAt": "desc"},
+            take=1,
+        )
+        if entries and entries[0].price and entries[0].price > 0:
+            return entries[0].price
+        return None
+    except Exception as e:
+        logger.error("Erro ao buscar último preço para sanity check | url=%s | %s", url, e)
+        return None
 
 
 def get_search_results(search_id: str) -> list:

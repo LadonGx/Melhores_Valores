@@ -1,7 +1,10 @@
+import logging
 import os
 
-import requests
+import httpx
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -10,10 +13,6 @@ FIRECRAWL_BASE_URL = os.getenv("FIRECRAWL_BASE_URL", "https://api.firecrawl.dev/
 
 
 def scrape_product_data(url: str):
-    """
-    Realiza a chamada para a API do Firecrawl para extrair dados brutos da URL.
-    Retorna o JSON bruto da extração.
-    """
     if not FIRECRAWL_API_KEY:
         return {}
 
@@ -22,39 +21,28 @@ def scrape_product_data(url: str):
         "Content-Type": "application/json",
     }
     payload = {
-        "url": url, 
+        "url": url,
         "formats": ["extract"],
         "extract": {
             "schema": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
-                    "price": {"type": "number"}
+                    "price": {"type": "number"},
                 },
-                "required": ["title", "price"]
+                "required": ["title", "price"],
             }
-        }
+        },
     }
 
     try:
-        response = requests.post(
-            FIRECRAWL_BASE_URL,
-            json=payload,
-            headers=headers,
-            timeout=60,
-        )
-        response.raise_for_status()
-        
-        # Firecrawl returns data in response.json()["data"]["extract"]
+        with httpx.Client(timeout=60) as client:
+            response = client.post(FIRECRAWL_BASE_URL, json=payload, headers=headers)
+            response.raise_for_status()
+
         res_json = response.json()
         extracted = res_json.get("data", {}).get("extract", {})
-        
-        # Mapeia o resultado para o formato que os adaptadores já esperam
-        return {
-            "data": {
-                "metadata": extracted
-            }
-        }
-    except requests.RequestException as e:
-        print(f"Erro no Firecrawl: {e}")
+        return {"data": {"metadata": extracted}}
+    except httpx.HTTPError as e:
+        logger.error("Firecrawl | erro HTTP | url=%s | error=%s", url, e)
         return {}

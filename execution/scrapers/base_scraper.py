@@ -1,6 +1,9 @@
-import httpx
-from bs4 import BeautifulSoup
+import logging
 import random
+
+import httpx
+
+logger = logging.getLogger(__name__)
 
 HEADERS_POOL = [
     {
@@ -27,5 +30,5 @@ def fetch_html_simple(url: str) -> str | None:
             response.raise_for_status()
             return response.text
     except Exception as e:
-        print(f"[base_scraper] Falhou para {url}: {e}")
+        logger.warning("base_scraper | falhou | url=%s | error=%s", url, e)
         return None

@@ -1,8 +1,11 @@
+import logging
 import re
 
 from bs4 import BeautifulSoup
 
-from execution.scrapers.playwright_scraper import fetch_html_playwright
+from ..scrapers.playwright_scraper import fetch_html_playwright
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_ml_price(item) -> float | None:
@@ -70,7 +73,7 @@ def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
 
     html = fetch_html_playwright(url, wait_ms=3000)
     if not html:
-        print(f"[mercadolivre_search] Playwright não retornou HTML para '{query}'")
+        logger.warning("mercadolivre_search | Playwright sem HTML | query='%s'", query)
         return []
 
     results = []
@@ -128,5 +131,5 @@ def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
         except Exception:
             continue
 
-    print(f"[mercadolivre_search] {len(results)} resultados para '{query}'")
+    logger.info("mercadolivre_search | %d resultados | query='%s'", len(results), query)
     return results

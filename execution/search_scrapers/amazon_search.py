@@ -1,7 +1,11 @@
-import httpx
-from bs4 import BeautifulSoup
+import logging
 import random
 import re
+
+import httpx
+from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 HEADERS_POOL = [
     {
@@ -170,8 +174,8 @@ def search_amazon(query: str, max_results: int = 10) -> list[dict]:
             except Exception:
                 continue
 
-    except Exception as e:
-        print(f"[amazon_search] Erro: {e}")
+    except Exception:
+        logger.exception("amazon_search | erro ao buscar | query='%s'", query)
 
-    print(f"[amazon_search] {len(results)} resultados para '{query}'")
+    logger.info("amazon_search | %d resultados | query='%s'", len(results), query)
     return results

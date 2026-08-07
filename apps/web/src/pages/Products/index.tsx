@@ -7,8 +7,8 @@ import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
 import {
   useProducts,
+  useRefreshPrice,
   useRemoveProduct,
-  useRescrapeProduct,
   useUpdateProductName,
 } from '@/features/products/hooks/useProducts';
 import { SearchByName } from '@/features/search/components/SearchByName';
@@ -93,10 +93,56 @@ function NameCell({ product }: { product: Product }) {
 export function Products() {
   const [modal, setModal] = useState<ModalType>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // Per-product loading: tracks which product IDs are currently being refreshed
+  const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
+
   const { data, isLoading, isError, refetch } = useProducts();
   const { mutate: removeProduct, isPending: isRemoving } = useRemoveProduct();
-  const { mutate: rescrape, isPending: isRescrapePending } = useRescrapeProduct();
+  const { mutate: refreshPrice } = useRefreshPrice();
   const closeToast = useCallback(() => setToast(null), []);
+
+  const handleRefresh = (product: Product) => {
+    setRefreshingIds((prev) => new Set(prev).add(product.id));
+
+    refreshPrice(product.id, {
+      onSuccess: (result) => {
+        setRefreshingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(product.id);
+          return next;
+        });
+
+        if (result.status === 'ok') {
+          const priceStr = result.price != null ? formatCurrency(result.price) : '—';
+          const stockStr = result.in_stock === false ? ' · Sem estoque' : '';
+          setToast({
+            message: `Preço atualizado: ${priceStr}${stockStr}`,
+            type: 'success',
+          });
+        } else {
+          // Specific error messages based on what went wrong
+          setToast({ message: result.detail, type: 'error' });
+        }
+      },
+      onError: (err) => {
+        setRefreshingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(product.id);
+          return next;
+        });
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.toLowerCase().includes('timeout')) {
+          setToast({
+            message: 'Tempo esgotado ao buscar preço. O site pode estar lento. Tente novamente.',
+            type: 'error',
+          });
+        } else {
+          setToast({ message: `Erro ao atualizar preço: ${msg}`, type: 'error' });
+        }
+      },
+    });
+  };
 
   const products = data?.products ?? [];
 
@@ -134,40 +180,39 @@ export function Products() {
     {
       key: 'actions',
       header: '',
-      width: '140px',
-      render: (r) => (
-        <div className={styles.rowActions}>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={isRescrapePending}
-            title="Re-verificar preço e nome agora"
-            onClick={() => {
-              rescrape(r.url, {
-                onSuccess: () => setToast({ message: 'Verificação agendada. Dados atualizarão em instantes.', type: 'success' }),
-                onError: () => setToast({ message: 'Erro ao agendar verificação.', type: 'error' }),
-              });
-            }}
-          >
-            Atualizar
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={isRemoving}
-            onClick={() => {
-              if (confirm(`Remover "${r.name ?? r.url}" do monitoramento?`)) {
-                removeProduct(r.id, {
-                  onSuccess: () => setToast({ message: 'Produto removido com sucesso.', type: 'success' }),
-                  onError: () => setToast({ message: 'Erro ao remover produto. Tente novamente.', type: 'error' }),
-                });
-              }
-            }}
-          >
-            Remover
-          </Button>
-        </div>
-      ),
+      width: '160px',
+      render: (r) => {
+        const isRefreshing = refreshingIds.has(r.id);
+        return (
+          <div className={styles.rowActions}>
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={isRefreshing}
+              disabled={isRefreshing}
+              title="Buscar preço atualizado agora"
+              onClick={() => handleRefresh(r)}
+            >
+              {isRefreshing ? 'Buscando…' : 'Atualizar preço'}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isRemoving || isRefreshing}
+              onClick={() => {
+                if (confirm(`Remover "${r.name ?? r.url}" do monitoramento?`)) {
+                  removeProduct(r.id, {
+                    onSuccess: () => setToast({ message: 'Produto removido com sucesso.', type: 'success' }),
+                    onError: () => setToast({ message: 'Erro ao remover produto. Tente novamente.', type: 'error' }),
+                  });
+                }
+              }}
+            >
+              Remover
+            </Button>
+          </div>
+        );
+      },
     },
   ];
 

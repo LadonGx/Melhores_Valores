@@ -1,3 +1,4 @@
+import asyncio
 from urllib.parse import urlparse, urlunparse
 
 from fastapi import FastAPI, HTTPException
@@ -6,10 +7,10 @@ from pydantic import BaseModel
 
 from .db_client import (
     add_price_history, delete_product, get_all_products, get_or_create_product,
-    get_product_with_history, get_search_results, update_product_name,
+    get_product_by_id, get_product_with_history, get_search_results, update_product_name,
 )
 from .store_detection import detect_store_from_url
-from .worker_tasks import process_price_check, task_search_products
+from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
 
 
 def _normalize_url(url: str) -> str:
@@ -32,8 +33,16 @@ class MonitorRequest(BaseModel):
     url: str
     name: str | None = None
     image_url: str | None = None
-    price: float | None = None       # Preço já conhecido (ex: via SearchResult)
+    price: float | None = None
     in_stock: bool = True
+
+
+class UpdateNameRequest(BaseModel):
+    name: str
+
+
+class SearchRequest(BaseModel):
+    query: str
 
 
 @app.get("/products")
@@ -65,6 +74,64 @@ async def remove_product(product_id: str):
     if not removed:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
     return {"status": "ok", "deleted_id": product_id}
+
+
+@app.post("/product/{product_id}/refresh")
+async def refresh_product_price(product_id: str):
+    """
+    Força um novo scraping imediato para um produto específico.
+    Ignora o cache Redis e aguarda o resultado de forma síncrona.
+    Retorna o novo preço ou um erro descritivo.
+    """
+    product = get_product_by_id(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+
+    try:
+        result = await asyncio.to_thread(
+            run_price_pipeline,
+            product.url,
+            product.store,
+            product.name,       # fallback_name = nome atual (não deixa perder)
+            product.imageUrl,   # fallback_image
+            True,               # skip_cache = True → força scraping fresco
+        )
+    except Exception as exc:
+        return {
+            "status": "error",
+            "reason": "exception",
+            "detail": f"Erro interno ao executar scraping: {exc}",
+        }
+
+    if result.get("status") == "ok":
+        return {
+            "status": "ok",
+            "price": result.get("price"),
+            "in_stock": result.get("in_stock", True),
+            "name": result.get("name"),
+            "source": result.get("source"),
+        }
+
+    # Interpreta o motivo do erro para retornar mensagem amigável
+    reason = result.get("reason", "")
+    if "cascata" in reason.lower() or "extrair" in reason.lower():
+        detail = (
+            "Não foi possível obter os dados do anúncio. "
+            "O produto pode ter sido removido, ou o site está bloqueando a verificação no momento."
+        )
+        error_code = "unavailable"
+    elif "inválido" in reason.lower() or "anti-bot" in reason.lower():
+        detail = "O site bloqueou a verificação de preço. Tente novamente em alguns minutos."
+        error_code = "blocked"
+    else:
+        detail = f"Falha ao atualizar preço: {reason}"
+        error_code = "scraping_failed"
+
+    return {
+        "status": "error",
+        "reason": error_code,
+        "detail": detail,
+    }
 
 
 @app.get("/")
@@ -110,9 +177,9 @@ async def add_product_to_monitor(payload: MonitorRequest):
 
 
 @app.patch("/product/{product_id}/name")
-async def update_product_name_endpoint(product_id: str, payload: dict):
+async def update_product_name_endpoint(product_id: str, payload: UpdateNameRequest):
     """Permite corrigir manualmente o nome de um produto."""
-    name = (payload.get("name") or "").strip()
+    name = payload.name.strip()
     if len(name) < 3:
         raise HTTPException(status_code=400, detail="Nome deve ter ao menos 3 caracteres.")
     updated = update_product_name(product_id, name)
@@ -154,10 +221,6 @@ async def get_product_history(product_id: str):
 # ─────────────────────────────────────────────
 # Rotas: Busca automática de produtos por nome
 # ─────────────────────────────────────────────
-
-class SearchRequest(BaseModel):
-    query: str
-
 
 @app.post("/search")
 def search_products(request: SearchRequest):

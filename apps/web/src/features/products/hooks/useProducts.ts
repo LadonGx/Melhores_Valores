@@ -49,8 +49,19 @@ export function useRescrapeProduct() {
   return useMutation({
     mutationFn: (url: string) => productsService.rescrape(url),
     onSuccess: () => {
-      // Aguarda o Celery processar antes de revalidar
       setTimeout(() => queryClient.invalidateQueries({ queryKey: productKeys.all }), 8_000);
+    },
+  });
+}
+
+export function useRefreshPrice() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (productId: string) => productsService.refreshPrice(productId),
+    onSuccess: () => {
+      // O endpoint é síncrono — resultado já está no DB quando voltamos
+      queryClient.invalidateQueries({ queryKey: productKeys.all });
     },
   });
 }

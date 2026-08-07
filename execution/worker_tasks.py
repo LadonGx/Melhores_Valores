@@ -1,14 +1,23 @@
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from celery import Celery
+from celery.schedules import crontab
 from dotenv import load_dotenv
 
 from .adapters import normalize_store, parse_product_data
 from .cache_manager import get_cached_price, set_cached_price
-from .db_client import add_price_history, get_all_products, get_or_create_product
+from .db_client import (
+    add_price_history,
+    get_all_products,
+    get_last_valid_price_for_url,
+    get_or_create_product,
+    is_garbage_name as _is_garbage_name,
+)
 from .scraping_orchestrator import scrape_product
+from .search_orchestrator import run_product_search
 
 load_dotenv()
 
@@ -25,6 +34,7 @@ def _build_success_payload(
     store: str,
     price: float,
     name: str | None,
+    in_stock: bool = True,
     product_id: str | None = None,
 ) -> dict[str, Any]:
     payload = {
@@ -34,29 +44,38 @@ def _build_success_payload(
         "store": store,
         "name": name,
         "price": float(price),
+        "in_stock": in_stock,
     }
     if product_id:
         payload["product_id"] = product_id
     return payload
 
 
-# Fragmentos que indicam erro de scraping (substrings — inglês + português)
-_GARBAGE_NAME_FRAGMENTS = {
-    # Inglês
-    "rate limited", "access denied", "forbidden", "captcha",
-    "just a moment", "blocked", "unavailable", "cloudflare",
-    # Português
-    "acesso negado", "acesso bloqueado", "atenção", "você foi bloqueado",
-    "não é possível", "página não encontrada", "verificação de segurança",
-    "robô", "bot detectado",
-}
+# Maximum ratio between new price and last known price before flagging as anomalous.
+# A 3x jump (e.g. R$100 → R$300 or R$300 → R$100) is treated as suspicious.
+_PRICE_JUMP_FACTOR = 3.0
 
 
-def _is_garbage_name(name: str | None) -> bool:
-    if not name or len(name.strip()) < 3:
-        return True
-    lower = name.strip().lower()
-    return any(g in lower for g in _GARBAGE_NAME_FRAGMENTS)
+def _passes_sanity_check(url: str, new_price: float) -> bool:
+    """
+    Returns False if the new price deviates suspiciously from the last known price.
+    Always returns True for new products (no history yet).
+    Non-blocking: DB errors default to True so the pipeline never stalls.
+    """
+    try:
+        last = get_last_valid_price_for_url(url)
+        if last is None or last <= 0:
+            return True
+        ratio = new_price / last
+        if ratio > _PRICE_JUMP_FACTOR or ratio < (1.0 / _PRICE_JUMP_FACTOR):
+            logger.warning(
+                "Sanity check: preço %.2f diverge %.1fx do último válido %.2f | url=%s",
+                new_price, ratio, last, url,
+            )
+            return False
+    except Exception:
+        logger.exception("Sanity check falhou com exceção; aceitando preço | url=%s", url)
+    return True
 
 
 def run_price_pipeline(
@@ -64,33 +83,48 @@ def run_price_pipeline(
     store: str,
     fallback_name: str | None = None,
     fallback_image: str | None = None,
+    skip_cache: bool = False,
 ) -> dict[str, Any]:
-    """Pipeline principal com integração real (Redis, Firecrawl e PostgreSQL)."""
+    """Pipeline principal com integração real (Redis, Firecrawl e PostgreSQL).
+
+    Args:
+        skip_cache: Se True, ignora o cache Redis e força um novo scraping.
+                    Deve ser True em refreshes manuais para garantir dados frescos.
+    """
     if not url or not isinstance(url, str):
         raise ValueError("'url' deve ser uma string não vazia.")
 
+    # Strip URL fragments (e.g. #polycard_client=...&tracking_id=...) — they break scraping
+    parsed = urlparse(url)
+    if parsed.fragment:
+        url = urlunparse(parsed._replace(fragment=""))
+        logger.info("URL normalizada: fragment removido | url=%s", url)
+
     normalized_store = normalize_store(store)
 
-    cached_payload = get_cached_price(url)
-    cached_price = cached_payload.get("price") if cached_payload else None
-    if cached_payload and isinstance(cached_price, (int, float)) and cached_price > 0:
-        # Aproveita o hit de cache mas garante nome correto no DB
-        cached_name = cached_payload.get("name")
-        best_name = cached_name if not _is_garbage_name(cached_name) else fallback_name
-        get_or_create_product(url=url, name=best_name, store=normalized_store, image_url=fallback_image)
-        return _build_success_payload(
-            source="cache",
-            url=url,
-            store=normalized_store,
-            price=float(cached_price),
-            name=best_name,
-        )
+    if not skip_cache:
+        cached_payload = get_cached_price(url)
+        cached_price = cached_payload.get("price") if cached_payload else None
+        if cached_payload and isinstance(cached_price, (int, float)) and cached_price > 0:
+            # Aproveita o hit de cache mas garante nome correto no DB
+            cached_name = cached_payload.get("name")
+            best_name = cached_name if not _is_garbage_name(cached_name) else fallback_name
+            get_or_create_product(url=url, name=best_name, store=normalized_store, image_url=fallback_image)
+            return _build_success_payload(
+                source="cache",
+                url=url,
+                store=normalized_store,
+                price=float(cached_price),
+                name=best_name,
+            )
 
     scrape_result = scrape_product(url, store=normalized_store)
     if not scrape_result:
-        # Sem scrape: ainda garante produto no DB com nome de fallback
-        if fallback_name:
-            get_or_create_product(url=url, name=fallback_name, store=normalized_store, image_url=fallback_image)
+        # Todos os níveis da cascata falharam por motivo técnico (timeout, bloqueio,
+        # Firecrawl indisponível, etc.) — nenhum adapter confirmou indisponibilidade,
+        # então não grava histórico (evita marcar o produto como "fora de estoque"
+        # por uma falha passageira). Só garante que o produto exista no DB.
+        get_or_create_product(url=url, name=fallback_name, store=normalized_store, image_url=fallback_image)
         return {
             "status": "error",
             "url": url,
@@ -104,8 +138,6 @@ def run_price_pipeline(
         source = "firecrawl"
     else:
         parsed_data = scrape_result
-        if "name" not in parsed_data and "title" in parsed_data:
-            parsed_data["name"] = parsed_data["title"]
         source = "cascata"
 
     product_name = parsed_data.get("name")
@@ -119,17 +151,28 @@ def run_price_pipeline(
         product_image = fallback_image
 
     product_price = parsed_data.get("price")
+    in_stock = parsed_data.get("in_stock", True)
 
     if not isinstance(product_price, (int, float)) or product_price <= 0:
+        product = get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
+        if not in_stock:
+            # Confirmado fora de estoque pelo adapter — registra no histórico
+            logger.info(
+                "Produto confirmado fora de estoque sem preço | url=%s store=%s", url, normalized_store
+            )
+            add_price_history(product_id=product.id, price=None, in_stock=False)
+            return {
+                "status": "out_of_stock",
+                "url": url,
+                "store": normalized_store,
+                "reason": "Produto fora de estoque.",
+            }
         logger.warning(
             "Preço inválido extraído (%.2f) para url=%s store=%s. Abortando salvamento.",
             product_price or 0,
             url,
             normalized_store,
         )
-        # Mesmo sem preço, cria/corrige o produto no DB com nome correto
-        if product_name:
-            get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
         return {
             "status": "error",
             "url": url,
@@ -137,8 +180,31 @@ def run_price_pipeline(
             "reason": f"Preço inválido extraído: {product_price}. Possível bloqueio anti-bot.",
         }
 
+    confidence = parsed_data.get("confidence_score", 1.0)
+    if not _passes_sanity_check(url, float(product_price)):
+        # Price jump detected. Only block the save when confidence is also low;
+        # if the extractor is confident, the jump may be genuine (flash sale, restock).
+        if confidence < 0.75:
+            logger.warning(
+                "Preço bloqueado por sanity check + baixa confiança | "
+                "price=%.2f confidence=%.2f | url=%s",
+                product_price, confidence, url,
+            )
+            if product_name:
+                get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
+            return {
+                "status": "error",
+                "url": url,
+                "store": normalized_store,
+                "reason": f"Preço {product_price} diverge do histórico e confiança é baixa ({confidence:.2f}). Não salvo.",
+            }
+        logger.warning(
+            "Sanity check falhou mas confidence alta (%.2f) — salvando mesmo assim | url=%s",
+            confidence, url,
+        )
+
     product = get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
-    add_price_history(product_id=product.id, price=float(product_price))
+    add_price_history(product_id=product.id, price=float(product_price), in_stock=in_stock)
 
     set_cached_price(
         product_url=url,
@@ -154,6 +220,7 @@ def run_price_pipeline(
         store=normalized_store,
         name=product_name,
         price=float(product_price),
+        in_stock=in_stock,
         product_id=product.id,
     )
 
@@ -198,8 +265,12 @@ def schedule_all_products() -> dict[str, Any]:
     }
 
 
-# Importa o agendamento para que o Celery Beat o reconheça
-from . import scheduler
+app.conf.beat_schedule = {
+    "schedule-all-products-every-6-hours": {
+        "task": "execution.worker_tasks.schedule_all_products",
+        "schedule": crontab(minute=0, hour="*/6"),
+    }
+}
 
 
 # ─────────────────────────────────────────────
@@ -219,6 +290,5 @@ def task_search_products(self, query: str) -> str:
     Returns:
         search_id = self.request.id (mesmo ID retornado pelo POST /search).
     """
-    from execution.search_orchestrator import run_product_search
     return run_product_search(query, search_id=self.request.id)
 
