@@ -7,7 +7,8 @@ from pydantic import BaseModel
 
 from .db_client import (
     add_price_history, delete_product, get_all_products, get_or_create_product,
-    get_product_by_id, get_product_with_history, get_search_results, update_product_name,
+    get_product_by_id, get_product_with_history, get_products_with_history,
+    get_search_results, update_product_name,
 )
 from .store_detection import detect_store_from_url
 from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
@@ -65,6 +66,33 @@ async def list_products():
             "updated_at": p.updatedAt.isoformat() if p.updatedAt else None,
         })
     return {"total": len(result), "products": result}
+
+
+@app.get("/products/promotions")
+async def list_promotions():
+    """Retorna produtos cujo preço atual é menor que todo o histórico anterior."""
+    products = get_products_with_history()
+    promotions = []
+    for p in products:
+        prices = [h.price for h in p.history if h.price is not None]
+        if len(prices) < 2:
+            continue  # sem histórico anterior suficiente para comparar
+        current_price, previous_prices = prices[0], prices[1:]
+        previous_lowest = min(previous_prices)
+        if current_price < previous_lowest:
+            latest = p.history[0]
+            promotions.append({
+                "id": p.id,
+                "url": p.url,
+                "name": p.name,
+                "store": p.store,
+                "image_url": p.imageUrl,
+                "current_price": current_price,
+                "previous_lowest_price": previous_lowest,
+                "savings": round(previous_lowest - current_price, 2),
+                "in_stock": latest.inStock if latest else None,
+            })
+    return {"total": len(promotions), "promotions": promotions}
 
 
 @app.delete("/product/{product_id}")

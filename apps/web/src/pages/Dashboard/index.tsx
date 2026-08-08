@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
+import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
-import { useProducts } from '@/features/products/hooks/useProducts';
+import { usePromotions, useProducts } from '@/features/products/hooks/useProducts';
 import type { Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
 import styles from './Dashboard.module.css';
@@ -158,18 +159,14 @@ export function Dashboard() {
   const [pendingGroupName, setPendingGroupName] = useState('');
   const [showNameInput, setShowNameInput] = useState(false);
   const [modalTarget, setModalTarget] = useState<ModalTarget>(null);
+  const [promotionsOpen, setPromotionsOpen] = useState(false);
+
+  const { data: promotionsData, isLoading: promotionsLoading } = usePromotions();
+  const promotions = promotionsData?.promotions ?? [];
 
   // Products that don't belong to any group
   const groupedProductIds = new Set(groups.flatMap((g) => g.productIds));
   const ungroupedProducts = products.filter((p) => !groupedProductIds.has(p.id));
-
-  // Stats
-  const stores = new Set(products.map((p) => p.store)).size;
-  const pricesWithValue = products.filter((p) => p.current_price != null);
-  const lowestToday =
-    pricesWithValue.length > 0
-      ? Math.min(...pricesWithValue.map((p) => p.current_price!))
-      : null;
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -217,18 +214,36 @@ export function Dashboard() {
             </div>
           </Card>
         )}
-        <Card>
+        <Card
+          className={promotions.length > 1 ? styles.statClickable : undefined}
+          onClick={promotions.length > 1 ? () => setPromotionsOpen(true) : undefined}
+        >
           <div className={styles.stat}>
-            <span className={styles.statValue}>{isLoading ? '—' : stores}</span>
-            <span className={styles.statLabel}>Lojas ativas</span>
-          </div>
-        </Card>
-        <Card>
-          <div className={styles.stat}>
-            <span className={styles.statValue}>
-              {isLoading ? '—' : lowestToday != null ? formatCurrency(lowestToday) : '—'}
-            </span>
-            <span className={styles.statLabel}>Menor preço hoje</span>
+            {promotionsLoading ? (
+              <>
+                <span className={styles.statValue}>—</span>
+                <span className={styles.statLabel}>Promoção hoje</span>
+              </>
+            ) : promotions.length === 0 ? (
+              <>
+                <span className={styles.statValue}>—</span>
+                <span className={styles.statLabel}>Nenhuma promoção hoje</span>
+              </>
+            ) : promotions.length === 1 ? (
+              <>
+                <span className={styles.statValue}>
+                  {formatCurrency(promotions[0].current_price)}
+                </span>
+                <span className={styles.statLabel}>
+                  {promotions[0].name ?? promotions[0].url}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className={styles.statValue}>{promotions.length}</span>
+                <span className={styles.statLabel}>produtos em promoção</span>
+              </>
+            )}
           </div>
         </Card>
       </div>
@@ -332,6 +347,13 @@ export function Dashboard() {
         allProducts={products}
         onDeleteGroup={deleteGroup}
         onUngroupProduct={ungroupProduct}
+      />
+
+      {/* ── Promotions modal ── */}
+      <PromotionsModal
+        isOpen={promotionsOpen}
+        onClose={() => setPromotionsOpen(false)}
+        promotions={promotions}
       />
     </div>
   );

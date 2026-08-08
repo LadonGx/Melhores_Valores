@@ -188,12 +188,6 @@ function GroupContent({
           <span className={styles.statLabel}>Anúncios no grupo</span>
           <span className={styles.statValue}>{groupProducts.length}</span>
         </div>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Lojas</span>
-          <span className={styles.statValue}>
-            {new Set(groupProducts.map((p) => p.store)).size}
-          </span>
-        </div>
       </div>
 
       {/* Per-listing accordion — each ListingAccordion calls useProductHistory internally */}

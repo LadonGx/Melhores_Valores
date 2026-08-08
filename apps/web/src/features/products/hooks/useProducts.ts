@@ -4,12 +4,20 @@ import { productsService } from '@/services/products';
 export const productKeys = {
   all: ['products'] as const,
   history: (id: string) => ['product', id, 'history'] as const,
+  promotions: ['products', 'promotions'] as const,
 };
 
 export function useProducts() {
   return useQuery({
     queryKey: productKeys.all,
     queryFn: productsService.getAll,
+  });
+}
+
+export function usePromotions() {
+  return useQuery({
+    queryKey: productKeys.promotions,
+    queryFn: productsService.getPromotions,
   });
 }
 
