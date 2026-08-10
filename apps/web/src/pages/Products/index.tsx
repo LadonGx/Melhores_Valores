@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { Modal } from '@/components/Modal';
 import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
@@ -93,14 +94,43 @@ function NameCell({ product }: { product: Product }) {
 export function Products() {
   const [modal, setModal] = useState<ModalType>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
   // Per-product loading: tracks which product IDs are currently being refreshed
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
 
   const { data, isLoading, isError, refetch } = useProducts();
-  const { mutate: removeProduct, isPending: isRemoving } = useRemoveProduct();
+  const { mutateAsync: removeProduct, isPending: isRemoving } = useRemoveProduct();
   const { mutate: refreshPrice } = useRefreshPrice();
   const closeToast = useCallback(() => setToast(null), []);
+
+  const products = data?.products ?? [];
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected = products.length > 0 && selectedIds.size === products.length;
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(products.map((p) => p.id)));
+  };
+
+  const handleConfirmDelete = async () => {
+    try {
+      await Promise.all([...selectedIds].map((id) => removeProduct(id)));
+      setToast({ message: 'Produtos removidos com sucesso.', type: 'success' });
+      setSelectedIds(new Set());
+    } catch {
+      setToast({ message: 'Erro ao remover produtos. Tente novamente.', type: 'error' });
+    } finally {
+      setConfirmDeleteOpen(false);
+    }
+  };
 
   const handleRefresh = (product: Product) => {
     setRefreshingIds((prev) => new Set(prev).add(product.id));
@@ -144,9 +174,20 @@ export function Products() {
     });
   };
 
-  const products = data?.products ?? [];
-
   const columns: Column<Product>[] = [
+    {
+      key: 'select',
+      header: '',
+      width: '36px',
+      render: (r) => (
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={selectedIds.has(r.id)}
+          onChange={() => toggleSelect(r.id)}
+        />
+      ),
+    },
     {
       key: 'store',
       header: 'Loja',
@@ -195,21 +236,6 @@ export function Products() {
             >
               {isRefreshing ? 'Buscando…' : 'Atualizar preço'}
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={isRemoving || isRefreshing}
-              onClick={() => {
-                if (confirm(`Remover "${r.name ?? r.url}" do monitoramento?`)) {
-                  removeProduct(r.id, {
-                    onSuccess: () => setToast({ message: 'Produto removido com sucesso.', type: 'success' }),
-                    onError: () => setToast({ message: 'Erro ao remover produto. Tente novamente.', type: 'error' }),
-                  });
-                }
-              }}
-            >
-              Remover
-            </Button>
           </div>
         );
       },
@@ -231,6 +257,25 @@ export function Products() {
           </div>
         }
       >
+        {selectedIds.size > 0 && (
+          <div className={styles.toolbar}>
+            <span className={styles.toolbarInfo}>
+              {selectedIds.size} selecionado{selectedIds.size !== 1 ? 's' : ''}
+            </span>
+            <div className={styles.toolbarActions}>
+              <Button size="sm" variant="ghost" onClick={toggleSelectAll}>
+                {allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => setConfirmDeleteOpen(true)}>
+                Excluir
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        )}
+
         {isError ? (
           <div className={styles.errorState}>
             <p>Erro ao carregar produtos. Verifique se a API está rodando.</p>
@@ -256,6 +301,16 @@ export function Products() {
       </Modal>
 
       {toast && <Toast message={toast.message} type={toast.type} onClose={closeToast} />}
+
+      <ConfirmModal
+        isOpen={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        onConfirm={handleConfirmDelete}
+        isLoading={isRemoving}
+        title="Excluir produtos"
+        message={`Tem certeza que deseja excluir ${selectedIds.size} produto(s) selecionado(s) do monitoramento? Essa ação não pode ser desfeita.`}
+        confirmLabel="Excluir"
+      />
     </div>
   );
 }

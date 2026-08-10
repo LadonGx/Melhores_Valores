@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
+import { ConfirmModal } from '@/components/ConfirmModal';
+import { Toast } from '@/components/Toast';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
 import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
-import { usePromotions, useProducts } from '@/features/products/hooks/useProducts';
+import { usePromotions, useProducts, useRemoveProduct } from '@/features/products/hooks/useProducts';
 import type { Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
 import styles from './Dashboard.module.css';
@@ -15,12 +17,14 @@ function GroupRow({
   group,
   products,
   onOpen,
-  groupingMode,
+  selected,
+  onToggleSelect,
 }: {
   group: ProductGroup;
   products: Product[];
   onOpen: () => void;
-  groupingMode: boolean;
+  selected: boolean;
+  onToggleSelect: () => void;
 }) {
   const groupProducts = group.productIds
     .map((id) => products.find((p) => p.id === id))
@@ -36,11 +40,18 @@ function GroupRow({
 
   return (
     <div
-      className={[styles.productRow, groupingMode ? styles.rowDisabled : ''].join(' ')}
-      onClick={groupingMode ? undefined : onOpen}
-      style={groupingMode ? undefined : { cursor: 'pointer' }}
+      className={[styles.productRow, selected ? styles.rowSelected : ''].join(' ')}
+      onClick={onOpen}
+      style={{ cursor: 'pointer' }}
     >
       <div className={styles.productRowMain}>
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={selected}
+          onChange={onToggleSelect}
+          onClick={(e) => e.stopPropagation()}
+        />
         {thumb ? (
           <img src={thumb} alt="" className={styles.productThumb} loading="lazy" />
         ) : (
@@ -77,44 +88,28 @@ function GroupRow({
 function ProductRow({
   product,
   onOpen,
-  groupingMode,
   selected,
   onToggleSelect,
 }: {
   product: Product;
   onOpen: () => void;
-  groupingMode: boolean;
   selected: boolean;
   onToggleSelect: () => void;
 }) {
-  const handleClick = () => {
-    if (groupingMode) {
-      onToggleSelect();
-    } else {
-      onOpen();
-    }
-  };
-
   return (
     <div
-      className={[
-        styles.productRow,
-        groupingMode ? styles.rowSelectable : '',
-        selected ? styles.rowSelected : '',
-      ].join(' ')}
-      onClick={handleClick}
+      className={[styles.productRow, selected ? styles.rowSelected : ''].join(' ')}
+      onClick={onOpen}
       style={{ cursor: 'pointer' }}
     >
       <div className={styles.productRowMain}>
-        {groupingMode && (
-          <input
-            type="checkbox"
-            className={styles.checkbox}
-            checked={selected}
-            onChange={onToggleSelect}
-            onClick={(e) => e.stopPropagation()}
-          />
-        )}
+        <input
+          type="checkbox"
+          className={styles.checkbox}
+          checked={selected}
+          onChange={onToggleSelect}
+          onClick={(e) => e.stopPropagation()}
+        />
         {product.image_url && (
           <img src={product.image_url} alt="" className={styles.productThumb} loading="lazy" />
         )}
@@ -135,7 +130,7 @@ function ProductRow({
           <span className={styles.currentPrice}>
             {product.current_price != null ? formatCurrency(product.current_price) : '—'}
           </span>
-          {!groupingMode && <span className={styles.detailHint}>Ver →</span>}
+          <span className={styles.detailHint}>Ver →</span>
         </div>
       </div>
     </div>
@@ -153,13 +148,15 @@ export function Dashboard() {
   const { data, isLoading } = useProducts();
   const products = data?.products ?? [];
   const { groups, createGroup, deleteGroup, ungroupProduct } = useProductGroups();
+  const { mutateAsync: removeProduct, isPending: isDeleting } = useRemoveProduct();
 
-  const [groupingMode, setGroupingMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingGroupName, setPendingGroupName] = useState('');
   const [showNameInput, setShowNameInput] = useState(false);
   const [modalTarget, setModalTarget] = useState<ModalTarget>(null);
   const [promotionsOpen, setPromotionsOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const { data: promotionsData, isLoading: promotionsLoading } = usePromotions();
   const promotions = promotionsData?.promotions ?? [];
@@ -167,6 +164,14 @@ export function Dashboard() {
   // Products that don't belong to any group
   const groupedProductIds = new Set(groups.flatMap((g) => g.productIds));
   const ungroupedProducts = products.filter((p) => !groupedProductIds.has(p.id));
+
+  const selectedGroups = groups.filter((g) => selectedIds.has(g.id));
+  const selectedProducts = ungroupedProducts.filter((p) => selectedIds.has(p.id));
+  const totalProductsToDelete =
+    selectedProducts.length + selectedGroups.reduce((sum, g) => sum + g.productIds.length, 0);
+
+  const allRowIds = [...groups.map((g) => g.id), ...ungroupedProducts.map((p) => p.id)];
+  const allSelected = allRowIds.length > 0 && selectedIds.size === allRowIds.length;
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -176,17 +181,37 @@ export function Dashboard() {
     });
   };
 
-  const exitGroupingMode = () => {
-    setGroupingMode(false);
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(allRowIds));
+  };
+
+  const clearSelection = () => {
     setSelectedIds(new Set());
     setShowNameInput(false);
     setPendingGroupName('');
   };
 
   const handleCreateGroup = () => {
-    if (pendingGroupName.trim() && selectedIds.size >= 2) {
-      createGroup(pendingGroupName.trim(), [...selectedIds]);
-      exitGroupingMode();
+    if (pendingGroupName.trim() && selectedProducts.length >= 2) {
+      createGroup(pendingGroupName.trim(), selectedProducts.map((p) => p.id));
+      clearSelection();
+    }
+  };
+
+  const handleConfirmDelete = async () => {
+    try {
+      const productIdsToDelete = [
+        ...selectedProducts.map((p) => p.id),
+        ...selectedGroups.flatMap((g) => g.productIds),
+      ];
+      await Promise.all(productIdsToDelete.map((id) => removeProduct(id)));
+      selectedGroups.forEach((g) => deleteGroup(g.id));
+      setToast({ message: 'Excluído com sucesso.', type: 'success' });
+      clearSelection();
+    } catch {
+      setToast({ message: 'Erro ao excluir. Tente novamente.', type: 'error' });
+    } finally {
+      setConfirmDeleteOpen(false);
     }
   };
 
@@ -249,20 +274,9 @@ export function Dashboard() {
       </div>
 
       {/* ── Product list ── */}
-      <Card
-        title="Produtos monitorados"
-        action={
-          !isLoading && products.length > 1 && (
-            groupingMode ? null : (
-              <Button variant="secondary" size="sm" onClick={() => setGroupingMode(true)}>
-                Agrupar anúncios
-              </Button>
-            )
-          )
-        }
-      >
-        {/* Grouping toolbar */}
-        {groupingMode && (
+      <Card title="Produtos monitorados">
+        {/* Selection toolbar */}
+        {selectedIds.size > 0 && (
           <div className={styles.toolbar}>
             <span className={styles.toolbarInfo}>
               {selectedIds.size} selecionado{selectedIds.size !== 1 ? 's' : ''}
@@ -291,14 +305,21 @@ export function Dashboard() {
               </div>
             ) : (
               <div className={styles.toolbarActions}>
+                <Button size="sm" variant="ghost" onClick={toggleSelectAll}>
+                  {allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
+                </Button>
                 <Button
                   size="sm"
-                  disabled={selectedIds.size < 2}
+                  disabled={selectedGroups.length > 0 || selectedProducts.length < 2}
+                  title={selectedGroups.length > 0 ? 'Desmarque os grupos para criar um novo grupo' : undefined}
                   onClick={() => setShowNameInput(true)}
                 >
-                  Criar grupo
+                  Agrupar anúncios
                 </Button>
-                <Button size="sm" variant="ghost" onClick={exitGroupingMode}>
+                <Button size="sm" variant="danger" onClick={() => setConfirmDeleteOpen(true)}>
+                  Excluir
+                </Button>
+                <Button size="sm" variant="ghost" onClick={clearSelection}>
                   Cancelar
                 </Button>
               </div>
@@ -320,7 +341,8 @@ export function Dashboard() {
                 key={g.id}
                 group={g}
                 products={products}
-                groupingMode={groupingMode}
+                selected={selectedIds.has(g.id)}
+                onToggleSelect={() => toggleSelect(g.id)}
                 onOpen={() => setModalTarget({ type: 'group', id: g.id })}
               />
             ))}
@@ -328,7 +350,6 @@ export function Dashboard() {
               <ProductRow
                 key={p.id}
                 product={p}
-                groupingMode={groupingMode}
                 selected={selectedIds.has(p.id)}
                 onToggleSelect={() => toggleSelect(p.id)}
                 onOpen={() => setModalTarget({ type: 'product', id: p.id })}
@@ -355,6 +376,22 @@ export function Dashboard() {
         onClose={() => setPromotionsOpen(false)}
         promotions={promotions}
       />
+
+      {/* ── Delete confirmation modal ── */}
+      <ConfirmModal
+        isOpen={confirmDeleteOpen}
+        onClose={() => setConfirmDeleteOpen(false)}
+        onConfirm={handleConfirmDelete}
+        isLoading={isDeleting}
+        title="Excluir selecionados"
+        message={
+          selectedGroups.length > 0
+            ? `Tem certeza que deseja excluir ${totalProductsToDelete} produto(s), incluindo ${selectedGroups.length} grupo(s)? Essa ação não pode ser desfeita.`
+            : `Tem certeza que deseja excluir ${totalProductsToDelete} produto(s) selecionado(s)? Essa ação não pode ser desfeita.`
+        }
+      />
+
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
 }
