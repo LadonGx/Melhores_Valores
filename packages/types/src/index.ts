@@ -30,12 +30,15 @@ export interface SearchResultsResponse {
 
 export type Store = 'amazon' | 'mercadolivre' | 'aliexpress' | string;
 
+export type ProductStatus = 'active' | 'paused';
+
 export interface Product {
   id: string;
   url: string;
   name: string | null;
   store: Store;
   image_url: string | null;
+  status?: ProductStatus;
   // Incluídos apenas no GET /products (não no sub-objeto de GET /product/{id}/history)
   current_price?: number | null;
   in_stock?: boolean | null;
@@ -103,4 +106,5 @@ export interface ProductGroup {
 
 export type RefreshPriceResponse =
   | { status: 'ok'; price: number; in_stock: boolean; name: string | null; source: string }
+  | { status: 'out_of_stock'; in_stock: false; detail: string }
   | { status: 'error'; reason: 'unavailable' | 'blocked' | 'scraping_failed' | 'exception'; detail: string };

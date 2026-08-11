@@ -2,8 +2,10 @@ import { useQueries } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
+import { Tooltip } from '@/components/Tooltip';
 import { productKeys, useProductHistory } from '@/features/products/hooks/useProducts';
 import { productsService } from '@/services/products';
+import { StockWarningBanner } from './StockWarningBanner';
 import type { PriceHistoryEntry, Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
 import styles from './ProductDetailModal.module.css';
@@ -52,6 +54,16 @@ function SingleProductContent({ product }: { product: Product }) {
 
   return (
     <div className={styles.body}>
+      <StockWarningBanner product={product} />
+      <div className={styles.accordionMeta}>
+        <span className={styles.storeBadge}>{formatStore(product.store)}</span>
+        {product.last_checked && (
+          <span className={styles.date}>Verificado em {formatDate(product.last_checked)}</span>
+        )}
+        <a href={product.url} target="_blank" rel="noreferrer" className={styles.productLink}>
+          Ver anúncio →
+        </a>
+      </div>
       <div className={styles.statsRow}>
         <div className={styles.statCard}>
           <span className={styles.statLabel}>Preço atual</span>
@@ -100,7 +112,29 @@ function ListingAccordion({
       <div className={styles.accordionHeader} onClick={() => setOpen((v) => !v)}>
         <span className={styles.storeBadge}>{formatStore(product.store)}</span>
         <span className={styles.accordionName}>{product.name ?? product.url}</span>
-        <span className={[styles.price, isCheapest ? styles.priceLowest : ''].join(' ')}>
+        {(product.in_stock === false || product.status === 'paused') && (
+          <Tooltip
+            content={
+              product.status === 'paused'
+                ? 'Monitoramento pausado pelo usuário. O histórico continua disponível.'
+                : 'Este anúncio pode estar fora de estoque ou ter sido removido.'
+            }
+          >
+            <span className={styles.warningIcon} onClick={(e) => e.stopPropagation()}>
+              {product.status === 'paused' ? '⏸' : '⚠'}
+            </span>
+          </Tooltip>
+        )}
+        {product.in_stock === false && (
+          <span className={styles.unavailableBadge}>Indisponível</span>
+        )}
+        <span
+          className={[
+            styles.price,
+            isCheapest ? styles.priceLowest : '',
+            product.in_stock === false ? styles.priceUnavailable : '',
+          ].join(' ')}
+        >
           {product.current_price != null ? formatCurrency(product.current_price) : '—'}
         </span>
         {histData?.lowest_price != null && (
@@ -119,13 +153,8 @@ function ListingAccordion({
       </div>
       {open && (
         <div className={styles.accordionBody}>
+          <StockWarningBanner product={product} />
           <div className={styles.accordionMeta}>
-            <span>
-              <strong>Em estoque:</strong>{' '}
-              {product.in_stock === false
-                ? <span className={styles.outOfStock}>Não</span>
-                : <span className={styles.inStock}>Sim</span>}
-            </span>
             {product.last_checked && (
               <span className={styles.date}>
                 Verificado em {formatDate(product.last_checked)}

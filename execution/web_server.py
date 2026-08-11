@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from .db_client import (
     add_price_history, delete_product, get_all_products, get_or_create_product,
     get_product_by_id, get_product_with_history, get_products_with_history,
-    get_search_results, update_product_name,
+    get_search_results, update_product_name, update_product_status,
 )
 from .store_detection import detect_store_from_url
 from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
@@ -42,6 +42,10 @@ class UpdateNameRequest(BaseModel):
     name: str
 
 
+class UpdateStatusRequest(BaseModel):
+    status: str
+
+
 class SearchRequest(BaseModel):
     query: str
 
@@ -61,6 +65,7 @@ async def list_products():
             "image_url": p.imageUrl,
             "current_price": latest.price if latest else None,
             "in_stock": latest.inStock if latest else None,
+            "status": p.status,
             "last_checked": latest.scrapedAt.isoformat() if latest and latest.scrapedAt else None,
             "created_at": p.createdAt.isoformat() if p.createdAt else None,
             "updated_at": p.updatedAt.isoformat() if p.updatedAt else None,
@@ -140,6 +145,13 @@ async def refresh_product_price(product_id: str):
             "source": result.get("source"),
         }
 
+    if result.get("status") == "out_of_stock":
+        return {
+            "status": "out_of_stock",
+            "in_stock": False,
+            "detail": "Produto confirmado fora de estoque pelo site.",
+        }
+
     # Interpreta o motivo do erro para retornar mensagem amigável
     reason = result.get("reason", "")
     if "cascata" in reason.lower() or "extrair" in reason.lower():
@@ -216,6 +228,17 @@ async def update_product_name_endpoint(product_id: str, payload: UpdateNameReque
     return {"status": "ok", "id": product_id, "name": name}
 
 
+@app.patch("/product/{product_id}/status")
+async def update_product_status_endpoint(product_id: str, payload: UpdateStatusRequest):
+    """Pausa ou reativa o monitoramento de um produto (soft-delete). Não apaga histórico."""
+    if payload.status not in ("active", "paused"):
+        raise HTTPException(status_code=400, detail="Status deve ser 'active' ou 'paused'.")
+    updated = update_product_status(product_id, payload.status)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Produto não encontrado.")
+    return {"status": "ok", "id": product_id, "product_status": payload.status}
+
+
 @app.get("/product/{product_id}/history")
 async def get_product_history(product_id: str):
     product_data = get_product_with_history(product_id)
@@ -229,6 +252,8 @@ async def get_product_history(product_id: str):
     lowest_price = min(prices) if prices else None
     average_price = round(sum(prices) / len(prices), 2) if prices else None
 
+    latest_entry = history[0] if history else None
+
     return {
         "product": {
             "id": product_data.get("id"),
@@ -236,6 +261,8 @@ async def get_product_history(product_id: str):
             "name": product_data.get("name"),
             "store": product_data.get("store"),
             "image_url": product_data.get("imageUrl"),
+            "status": product_data.get("status"),
+            "in_stock": latest_entry.get("inStock") if latest_entry else None,
             "created_at": product_data.get("createdAt"),
             "updated_at": product_data.get("updatedAt"),
         },

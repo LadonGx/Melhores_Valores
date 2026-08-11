@@ -1,4 +1,5 @@
 # Mercado Livre Adapter
+import json
 import logging
 import re
 from bs4 import BeautifulSoup
@@ -40,6 +41,14 @@ def extract_name(json_data):
     data = json_data.get("data", json_data)
     metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
     return metadata.get("title") or metadata.get("name")
+
+
+def extract_in_stock(json_data) -> bool:
+    """Reads the 'available' field from Firecrawl's structured extraction. Defaults to True."""
+    data = json_data.get("data", json_data)
+    metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
+    value = metadata.get("available")
+    return value if isinstance(value, bool) else True
 
 
 def _parse_price_from_soup(soup) -> tuple[float | None, str, float]:
@@ -108,11 +117,32 @@ def _is_out_of_stock(soup) -> bool:
     """Returns True if the MercadoLivre page explicitly indicates unavailability."""
     if soup.select_one(".ui-pdp-buybox--unavailable, .ui-pdp-container--unavailable"):
         return True
+
+    # Seletores existentes — cobrem outros layouts de "sem estoque".
     stock_el = soup.select_one(".ui-pdp-stock-information, .ui-pdp-buybox__quantity")
     if stock_el:
         text = stock_el.get_text(strip=True).lower()
         if any(kw in text for kw in ("sem estoque", "indisponível", "sem unidades")):
             return True
+
+    # Banner de indisponibilidade confirmado em HTML real do ML (não usa os seletores acima).
+    message_el = soup.select_one(".ui-pdp-shipping-message__text")
+    if message_el:
+        text = message_el.get_text(strip=True).lower()
+        if any(kw in text for kw in ("indisponível", "não está mais disponível", "pausad")):
+            return True
+
+    # Fallback estrutural: JSON-LD schema.org/Product, mais resistente a mudanças de CSS.
+    for script_tag in soup.find_all("script", {"type": "application/ld+json"}):
+        try:
+            data = json.loads(script_tag.string or "")
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and data.get("@type") == "Product":
+            availability = (data.get("offers") or {}).get("availability", "")
+            if "OutOfStock" in availability:
+                return True
+
     return False
 
 

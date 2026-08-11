@@ -117,6 +117,16 @@ def update_product_name(product_id: str, name: str) -> Product | None:
         return None
 
 
+def update_product_status(product_id: str, status: str) -> Product | None:
+    """Atualiza o status de monitoramento de um produto ('active' ou 'paused')."""
+    connect_db()
+    try:
+        return db.product.update(where={"id": product_id}, data={"status": status})
+    except Exception as e:
+        logger.error(f"Erro ao atualizar status do produto {product_id}: {e}")
+        return None
+
+
 def add_price_history(product_id: str, price: float | None, in_stock: bool = True) -> PriceHistory:
     """
     Registra uma nova entrada de preço para um produto específico.
