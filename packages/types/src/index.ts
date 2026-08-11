@@ -63,6 +63,23 @@ export interface ProductWithHistory {
   history: PriceHistoryEntry[];
 }
 
+export interface ProductPromotion {
+  id: string;
+  url: string;
+  name: string | null;
+  store: Store;
+  image_url: string | null;
+  current_price: number;
+  previous_lowest_price: number;
+  savings: number;
+  in_stock: boolean | null;
+}
+
+export interface PromotionsResponse {
+  total: number;
+  promotions: ProductPromotion[];
+}
+
 export interface SearchResult {
   id: string;
   search_id: string;

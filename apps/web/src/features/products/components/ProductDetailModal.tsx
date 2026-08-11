@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
-import { useProductHistory } from '@/features/products/hooks/useProducts';
+import { useGroupHistory, useProductHistory } from '@/features/products/hooks/useProducts';
 import { StockWarningBanner } from './StockWarningBanner';
 import type { PriceHistoryEntry, Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
@@ -200,6 +200,22 @@ function GroupContent({
 
   const cheapest = sorted.find((p) => p.current_price != null);
 
+  const historyQueries = useGroupHistory(groupProducts.map((p) => p.id));
+
+  const historyLoading = historyQueries.some((q) => q.isLoading);
+  const allPrices = historyQueries
+    .flatMap((q) => q.data?.history ?? [])
+    .map((h) => h.price)
+    .filter((p): p is number => p != null);
+
+  const lowestHistorical = allPrices.length > 0 ? Math.min(...allPrices) : null;
+  const medianPrice = (() => {
+    if (allPrices.length === 0) return null;
+    const s = [...allPrices].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 !== 0 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  })();
+
   return (
     <div className={styles.body}>
       {/* Stat cards */}
@@ -214,13 +230,15 @@ function GroupContent({
           )}
         </div>
         <div className={styles.statCard}>
-          <span className={styles.statLabel}>Anúncios no grupo</span>
-          <span className={styles.statValue}>{groupProducts.length}</span>
+          <span className={styles.statLabel}>Menor preço histórico</span>
+          <span className={styles.statValue}>
+            {historyLoading ? '…' : lowestHistorical != null ? formatCurrency(lowestHistorical) : '—'}
+          </span>
         </div>
         <div className={styles.statCard}>
-          <span className={styles.statLabel}>Lojas</span>
+          <span className={styles.statLabel}>Mediana de preços</span>
           <span className={styles.statValue}>
-            {new Set(groupProducts.map((p) => p.store)).size}
+            {historyLoading ? '…' : medianPrice != null ? formatCurrency(medianPrice) : '—'}
           </span>
         </div>
       </div>

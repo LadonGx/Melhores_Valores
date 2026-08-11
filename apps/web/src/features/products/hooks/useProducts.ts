@@ -1,10 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ProductStatus } from '@mv/types';
 import { productsService } from '@/services/products';
 
 export const productKeys = {
   all: ['products'] as const,
   history: (id: string) => ['product', id, 'history'] as const,
+  promotions: ['products', 'promotions'] as const,
 };
 
 export function useProducts() {
@@ -14,11 +15,28 @@ export function useProducts() {
   });
 }
 
+export function usePromotions() {
+  return useQuery({
+    queryKey: productKeys.promotions,
+    queryFn: productsService.getPromotions,
+  });
+}
+
 export function useProductHistory(productId: string) {
   return useQuery({
     queryKey: productKeys.history(productId),
     queryFn: () => productsService.getHistory(productId),
     enabled: !!productId,
+  });
+}
+
+export function useGroupHistory(productIds: string[]) {
+  return useQueries({
+    queries: productIds.map((id) => ({
+      queryKey: productKeys.history(id),
+      queryFn: () => productsService.getHistory(id),
+      enabled: !!id,
+    })),
   });
 }
 

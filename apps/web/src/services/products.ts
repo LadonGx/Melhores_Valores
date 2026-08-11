@@ -3,6 +3,7 @@ import type {
   Product,
   ProductStatus,
   ProductWithHistory,
+  PromotionsResponse,
   RefreshPriceResponse,
 } from '@mv/types';
 import { api } from './api';
@@ -10,6 +11,11 @@ import { api } from './api';
 export const productsService = {
   getAll: async (): Promise<{ total: number; products: Product[] }> => {
     const { data } = await api.get('/products');
+    return data;
+  },
+
+  getPromotions: async (): Promise<PromotionsResponse> => {
+    const { data } = await api.get<PromotionsResponse>('/products/promotions');
     return data;
   },
 

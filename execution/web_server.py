@@ -7,8 +7,8 @@ from pydantic import BaseModel
 
 from .db_client import (
     add_price_history, delete_product, get_all_products, get_or_create_product,
-    get_product_by_id, get_product_with_history, get_search_results, update_product_name,
-    update_product_status,
+    get_product_by_id, get_product_with_history, get_products_with_history,
+    get_search_results, update_product_name, update_product_status,
 )
 from .store_detection import detect_store_from_url
 from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
@@ -71,6 +71,52 @@ async def list_products():
             "updated_at": p.updatedAt.isoformat() if p.updatedAt else None,
         })
     return {"total": len(result), "products": result}
+
+
+def _compute_promotions(products: list) -> list[dict]:
+    """
+    Retorna produtos cujo preço mais recente é menor que todo o histórico anterior.
+
+    O "atual" é sempre p.history[0] (checagem mais recente, histórico vem ordenado
+    scrapedAt desc) — produtos cuja checagem mais recente confirmou indisponibilidade
+    (price=None, inStock=False) são descartados, para nunca anunciar como "promoção"
+    um produto que está fora de estoque agora.
+    """
+    promotions = []
+    for p in products:
+        if not p.history:
+            continue
+        latest = p.history[0]
+        if latest.price is None or not latest.inStock:
+            continue  # sem preço válido agora, ou confirmado fora de estoque
+
+        previous_prices = [h.price for h in p.history[1:] if h.price is not None]
+        if not previous_prices:
+            continue  # sem histórico anterior suficiente para comparar
+
+        current_price = latest.price
+        previous_lowest = min(previous_prices)
+        if current_price < previous_lowest:
+            promotions.append({
+                "id": p.id,
+                "url": p.url,
+                "name": p.name,
+                "store": p.store,
+                "image_url": p.imageUrl,
+                "current_price": current_price,
+                "previous_lowest_price": previous_lowest,
+                "savings": round(previous_lowest - current_price, 2),
+                "in_stock": latest.inStock,
+            })
+    return promotions
+
+
+@app.get("/products/promotions")
+async def list_promotions():
+    """Retorna produtos cujo preço atual é menor que todo o histórico anterior."""
+    products = get_products_with_history()
+    promotions = _compute_promotions(products)
+    return {"total": len(promotions), "promotions": promotions}
 
 
 @app.delete("/product/{product_id}")

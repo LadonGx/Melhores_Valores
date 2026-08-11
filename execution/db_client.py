@@ -204,6 +204,23 @@ def get_all_products() -> list:
         raise
 
 
+def get_products_with_history() -> list:
+    """Retorna todos os produtos com o histórico de preços completo (mais recentes primeiro)."""
+    connect_db()
+    try:
+        return db.product.find_many(
+            order={"createdAt": "desc"},
+            include={
+                "history": {
+                    "order_by": {"scrapedAt": "desc"},
+                },
+            },
+        )
+    except Exception as e:
+        logger.error(f"Erro ao buscar produtos com histórico: {e}")
+        raise
+
+
 def delete_product(product_id: str) -> bool:
     """
     Remove um produto e todo seu histórico de preços pelo ID.
