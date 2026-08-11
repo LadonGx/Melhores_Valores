@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ProductStatus } from '@mv/types';
 import { productsService } from '@/services/products';
 
@@ -27,6 +27,16 @@ export function useProductHistory(productId: string) {
     queryKey: productKeys.history(productId),
     queryFn: () => productsService.getHistory(productId),
     enabled: !!productId,
+  });
+}
+
+export function useGroupHistory(productIds: string[]) {
+  return useQueries({
+    queries: productIds.map((id) => ({
+      queryKey: productKeys.history(id),
+      queryFn: () => productsService.getHistory(id),
+      enabled: !!id,
+    })),
   });
 }
 

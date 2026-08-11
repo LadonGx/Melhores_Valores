@@ -73,19 +73,30 @@ async def list_products():
     return {"total": len(result), "products": result}
 
 
-@app.get("/products/promotions")
-async def list_promotions():
-    """Retorna produtos cujo preço atual é menor que todo o histórico anterior."""
-    products = get_products_with_history()
+def _compute_promotions(products: list) -> list[dict]:
+    """
+    Retorna produtos cujo preço mais recente é menor que todo o histórico anterior.
+
+    O "atual" é sempre p.history[0] (checagem mais recente, histórico vem ordenado
+    scrapedAt desc) — produtos cuja checagem mais recente confirmou indisponibilidade
+    (price=None, inStock=False) são descartados, para nunca anunciar como "promoção"
+    um produto que está fora de estoque agora.
+    """
     promotions = []
     for p in products:
-        prices = [h.price for h in p.history if h.price is not None]
-        if len(prices) < 2:
+        if not p.history:
+            continue
+        latest = p.history[0]
+        if latest.price is None or not latest.inStock:
+            continue  # sem preço válido agora, ou confirmado fora de estoque
+
+        previous_prices = [h.price for h in p.history[1:] if h.price is not None]
+        if not previous_prices:
             continue  # sem histórico anterior suficiente para comparar
-        current_price, previous_prices = prices[0], prices[1:]
+
+        current_price = latest.price
         previous_lowest = min(previous_prices)
         if current_price < previous_lowest:
-            latest = p.history[0]
             promotions.append({
                 "id": p.id,
                 "url": p.url,
@@ -95,8 +106,16 @@ async def list_promotions():
                 "current_price": current_price,
                 "previous_lowest_price": previous_lowest,
                 "savings": round(previous_lowest - current_price, 2),
-                "in_stock": latest.inStock if latest else None,
+                "in_stock": latest.inStock,
             })
+    return promotions
+
+
+@app.get("/products/promotions")
+async def list_promotions():
+    """Retorna produtos cujo preço atual é menor que todo o histórico anterior."""
+    products = get_products_with_history()
+    promotions = _compute_promotions(products)
     return {"total": len(promotions), "promotions": promotions}
 
 

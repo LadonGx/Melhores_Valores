@@ -1,10 +1,8 @@
-import { useQueries } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
-import { productKeys, useProductHistory } from '@/features/products/hooks/useProducts';
-import { productsService } from '@/services/products';
+import { useGroupHistory, useProductHistory } from '@/features/products/hooks/useProducts';
 import { StockWarningBanner } from './StockWarningBanner';
 import type { PriceHistoryEntry, Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
@@ -202,12 +200,7 @@ function GroupContent({
 
   const cheapest = sorted.find((p) => p.current_price != null);
 
-  const historyQueries = useQueries({
-    queries: groupProducts.map((p) => ({
-      queryKey: productKeys.history(p.id),
-      queryFn: () => productsService.getHistory(p.id),
-    })),
-  });
+  const historyQueries = useGroupHistory(groupProducts.map((p) => p.id));
 
   const historyLoading = historyQueries.some((q) => q.isLoading);
   const allPrices = historyQueries
