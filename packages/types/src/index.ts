@@ -30,12 +30,15 @@ export interface SearchResultsResponse {
 
 export type Store = 'amazon' | 'mercadolivre' | 'aliexpress' | string;
 
+export type ProductStatus = 'active' | 'paused';
+
 export interface Product {
   id: string;
   url: string;
   name: string | null;
   store: Store;
   image_url: string | null;
+  status?: ProductStatus;
   // Incluídos apenas no GET /products (não no sub-objeto de GET /product/{id}/history)
   current_price?: number | null;
   in_stock?: boolean | null;

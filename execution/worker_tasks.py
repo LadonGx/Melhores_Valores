@@ -254,6 +254,9 @@ def schedule_all_products() -> dict[str, Any]:
     for product in products:
         if not product.url or not product.store:
             continue
+        if getattr(product, "status", "active") == "paused":
+            # Monitoramento pausado pelo usuário (ex: anúncio fora de estoque) — não reenfileira.
+            continue
 
         # Passa nome e imagem atuais como fallback para que re-checagens não sobrescrevam com lixo
         process_price_check.delay(product.url, product.store, product.name, product.imageUrl)
