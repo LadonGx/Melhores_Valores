@@ -43,6 +43,14 @@ def extract_name(json_data):
     return metadata.get("title") or metadata.get("name")
 
 
+def extract_in_stock(json_data) -> bool:
+    """Reads the 'available' field from Firecrawl's structured extraction. Defaults to True."""
+    data = json_data.get("data", json_data)
+    metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
+    value = metadata.get("available")
+    return value if isinstance(value, bool) else True
+
+
 def _parse_price_text(text: str) -> float | None:
     """Converts 'R$ 1.299,00' or '1.299,00' to float 1299.0."""
     try:

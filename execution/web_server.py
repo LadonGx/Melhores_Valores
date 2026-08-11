@@ -118,6 +118,13 @@ async def refresh_product_price(product_id: str):
             "source": result.get("source"),
         }
 
+    if result.get("status") == "out_of_stock":
+        return {
+            "status": "out_of_stock",
+            "in_stock": False,
+            "detail": "Produto confirmado fora de estoque pelo site.",
+        }
+
     # Interpreta o motivo do erro para retornar mensagem amigável
     reason = result.get("reason", "")
     if "cascata" in reason.lower() or "extrair" in reason.lower():

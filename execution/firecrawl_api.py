@@ -29,6 +29,14 @@ def scrape_product_data(url: str):
                 "properties": {
                     "title": {"type": "string"},
                     "price": {"type": "number"},
+                    "available": {
+                        "type": "boolean",
+                        "description": (
+                            "Whether the product is currently in stock and available for "
+                            "purchase. False if the page shows any out-of-stock/"
+                            "unavailable/sold-out message."
+                        ),
+                    },
                 },
                 "required": ["title", "price"],
             }

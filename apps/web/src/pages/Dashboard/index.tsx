@@ -162,7 +162,15 @@ function ProductRow({
         </div>
 
         <div className={styles.productMeta}>
-          <span className={styles.currentPrice}>
+          {product.in_stock === false && (
+            <span className={styles.unavailableBadge}>Indisponível</span>
+          )}
+          <span
+            className={[
+              styles.currentPrice,
+              product.in_stock === false ? styles.currentPriceUnavailable : '',
+            ].join(' ')}
+          >
             {product.current_price != null ? formatCurrency(product.current_price) : '—'}
           </span>
           {!groupingMode && <span className={styles.detailHint}>Ver →</span>}

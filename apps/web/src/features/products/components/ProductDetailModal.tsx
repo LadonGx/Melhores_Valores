@@ -123,7 +123,16 @@ function ListingAccordion({
             </span>
           </Tooltip>
         )}
-        <span className={[styles.price, isCheapest ? styles.priceLowest : ''].join(' ')}>
+        {product.in_stock === false && (
+          <span className={styles.unavailableBadge}>Indisponível</span>
+        )}
+        <span
+          className={[
+            styles.price,
+            isCheapest ? styles.priceLowest : '',
+            product.in_stock === false ? styles.priceUnavailable : '',
+          ].join(' ')}
+        >
           {product.current_price != null ? formatCurrency(product.current_price) : '—'}
         </span>
         {histData?.lowest_price != null && (

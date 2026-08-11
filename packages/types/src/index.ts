@@ -89,4 +89,5 @@ export interface ProductGroup {
 
 export type RefreshPriceResponse =
   | { status: 'ok'; price: number; in_stock: boolean; name: string | null; source: string }
+  | { status: 'out_of_stock'; in_stock: false; detail: string }
   | { status: 'error'; reason: 'unavailable' | 'blocked' | 'scraping_failed' | 'exception'; detail: string };

@@ -227,6 +227,22 @@
   white-space: nowrap;
 }
 
+.currentPriceUnavailable {
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+  font-weight: 500;
+}
+
+.unavailableBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  padding: 2px 6px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
 .lowestBadge {
   font-size: 12px;
   font-weight: 700;
