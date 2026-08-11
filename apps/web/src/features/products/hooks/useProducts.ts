@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { ProductStatus } from '@mv/types';
 import { productsService } from '@/services/products';
 
 export const productKeys = {
@@ -72,6 +73,16 @@ export function useUpdateProductName() {
   return useMutation({
     mutationFn: ({ productId, name }: { productId: string; name: string }) =>
       productsService.updateName(productId, name),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: productKeys.all }),
+  });
+}
+
+export function useUpdateProductStatus() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ productId, status }: { productId: string; status: ProductStatus }) =>
+      productsService.updateStatus(productId, status),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: productKeys.all }),
   });
 }

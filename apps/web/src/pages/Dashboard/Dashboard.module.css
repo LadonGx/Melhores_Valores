@@ -115,6 +115,10 @@
   background: color-mix(in srgb, var(--color-primary) 8%, transparent) !important;
 }
 
+.rowPaused {
+  opacity: 0.6;
+}
+
 .productRowMain {
   display: flex;
   align-items: center;
@@ -180,6 +184,13 @@
   gap: 4px;
 }
 
+.productNameRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .productName {
   font-size: 13px;
   font-weight: 500;
@@ -187,6 +198,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.warningIcon {
+  font-size: 13px;
+  flex-shrink: 0;
+  cursor: help;
+  line-height: 1;
 }
 
 .lastChecked {
@@ -208,22 +227,28 @@
   white-space: nowrap;
 }
 
+.currentPriceUnavailable {
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+  font-weight: 500;
+}
+
+.unavailableBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  padding: 2px 6px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
 .lowestBadge {
   font-size: 12px;
   font-weight: 700;
   color: var(--color-success);
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
   padding: 3px 10px;
-  border-radius: 99px;
-  white-space: nowrap;
-}
-
-.outOfStockBadge {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
-  padding: 2px 6px;
   border-radius: 99px;
   white-space: nowrap;
 }

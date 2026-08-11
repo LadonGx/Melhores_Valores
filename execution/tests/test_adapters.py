@@ -6,7 +6,7 @@ price parsing edge cases, and confirmed-unavailable signal propagation.
 """
 
 import pytest
-from execution.adapters import amazon, mercadolivre, aliexpress
+from execution.adapters import amazon, mercadolivre, aliexpress, parse_product_data
 
 
 # ─── HTML Fixtures ───────────────────────────────────────────────────────────
@@ -129,6 +129,33 @@ MERCADOLIVRE_NO_PRICE = """
 <html><head><title>Produto - Mercado Livre</title></head>
 <body>
   <h1 class="ui-pdp-title">Livro Python</h1>
+</body></html>
+"""
+
+# Reproduz o banner real de indisponibilidade do ML (confirmado via HTML real capturado
+# pelo usuário) — usa .ui-pdp-shipping-message__text, fora dos seletores antigos.
+MERCADOLIVRE_OUT_OF_STOCK_SHIPPING_MESSAGE = """
+<html><head><title>Produto - Mercado Livre</title></head>
+<body>
+  <h1 class="ui-pdp-title">Livro O Caminho Dos Reis</h1>
+  <div class="ui-pdp-message ui-pdp-shipping-message mt-24 mb-16 andes-message andes-message--caution andes-message--quiet">
+    <div class="andes-message__content andes-message__content--untitled">
+      <div class="andes-message__text">
+        <div class="ui-pdp-shipping-message__text">Este produto está indisponível no momento.</div>
+      </div>
+    </div>
+  </div>
+</body></html>
+"""
+
+# Página sem o banner CSS, mas com o JSON-LD schema.org/Product confirmando OutOfStock.
+MERCADOLIVRE_OUT_OF_STOCK_JSON_LD = """
+<html><head><title>Produto - Mercado Livre</title></head>
+<body>
+  <h1 class="ui-pdp-title">Livro O Caminho Dos Reis</h1>
+  <script type="application/ld+json">
+  {"name": "Livro O Caminho Dos Reis", "offers": {"@type": "Offer", "price": 0, "availability": "https://schema.org/OutOfStock"}, "@type": "Product"}
+  </script>
 </body></html>
 """
 
@@ -272,6 +299,22 @@ class TestMercadoLivreAdapter:
         assert result is not None
         assert result["price"] == 199.90
 
+    def test_out_of_stock_shipping_message_banner(self):
+        """Banner real do ML (.ui-pdp-shipping-message__text) — não usa os seletores antigos."""
+        result = mercadolivre.extract_from_html(MERCADOLIVRE_OUT_OF_STOCK_SHIPPING_MESSAGE)
+        assert result is not None
+        assert result["in_stock"] is False
+        assert result["price"] is None
+        assert result["confidence_score"] >= 0.55
+
+    def test_out_of_stock_via_json_ld(self):
+        """Fallback estrutural via JSON-LD schema.org/Product quando não há banner CSS."""
+        result = mercadolivre.extract_from_html(MERCADOLIVRE_OUT_OF_STOCK_JSON_LD)
+        assert result is not None
+        assert result["in_stock"] is False
+        assert result["price"] is None
+        assert result["confidence_score"] >= 0.55
+
 
 # ─── AliExpress Tests ─────────────────────────────────────────────────────────
 
@@ -310,6 +353,34 @@ class TestAliExpressAdapter:
     def test_empty_html_returns_none(self):
         result = aliexpress.extract_from_html("<html></html>")
         assert result is None
+
+
+# ─── Firecrawl path: extract_in_stock / parse_product_data ───────────────────
+
+class TestFirecrawlInStockExtraction:
+    """Regressão: o caminho do Firecrawl (usado quando httpx/Playwright são bloqueados)
+    precisa propagar 'in_stock' — antes desse fix, ele nunca setava essa chave."""
+
+    @pytest.mark.parametrize("adapter", [amazon, mercadolivre, aliexpress])
+    def test_extract_in_stock_false_when_unavailable(self, adapter):
+        payload = {"data": {"metadata": {"title": "Produto", "price": 0, "available": False}}}
+        assert adapter.extract_in_stock(payload) is False
+
+    @pytest.mark.parametrize("adapter", [amazon, mercadolivre, aliexpress])
+    def test_extract_in_stock_defaults_true_when_missing(self, adapter):
+        payload = {"data": {"metadata": {"title": "Produto", "price": 199.90}}}
+        assert adapter.extract_in_stock(payload) is True
+
+    def test_parse_product_data_propagates_in_stock_false(self):
+        payload = {"data": {"metadata": {"title": "Livro X", "price": 0, "available": False}}}
+        result = parse_product_data("mercadolivre", payload)
+        assert result["in_stock"] is False
+        assert result["price"] == 0.0
+
+    def test_parse_product_data_defaults_in_stock_true(self):
+        payload = {"data": {"metadata": {"title": "Livro X", "price": 199.90}}}
+        result = parse_product_data("mercadolivre", payload)
+        assert result["in_stock"] is True
 
 
 # ─── Price parsing edge cases ─────────────────────────────────────────────────

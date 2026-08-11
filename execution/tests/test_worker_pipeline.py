@@ -4,7 +4,7 @@ Unit tests for worker_tasks.run_price_pipeline.
 All DB and scraping calls are mocked so these run without Docker.
 """
 
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 import pytest
 
 from execution.worker_tasks import run_price_pipeline
@@ -77,7 +77,7 @@ class TestSuccessfulScrape:
         }
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
              patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
-             patch(MOCK_PATCHES["get_or_create"], return_value=product) as mock_create, \
+             patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]) as mock_history, \
              patch(MOCK_PATCHES["cache_set"]), \
              patch(MOCK_PATCHES["last_price"], return_value=None), \
@@ -148,6 +148,29 @@ class TestFailureAndOutOfStock:
     def test_invalid_url_raises(self):
         with pytest.raises(ValueError):
             run_price_pipeline("", "amazon")
+
+    def test_firecrawl_confirmed_out_of_stock_records_history(self):
+        """Regressão: quando níveis 1/2 falham e o Firecrawl (nível 3) é quem alcança a
+        página real e confirma indisponibilidade (`available: False`), o pipeline deve
+        gravar `in_stock: False` — antes desse fix, o caminho do Firecrawl nunca setava
+        `in_stock`, caindo no ramo genérico de 'preço inválido' e não gravando nada."""
+        product = _make_product()
+        # Formato bruto retornado por scrape_product_data (Firecrawl) — contém "data",
+        # o que faz run_price_pipeline rotear para parse_product_data (não mockado aqui).
+        scrape_result = {
+            "data": {
+                "metadata": {"title": "Livro O Caminho Dos Reis", "price": 0, "available": False}
+            }
+        }
+        with patch(MOCK_PATCHES["cache_get"], return_value=None), \
+             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["get_or_create"], return_value=product), \
+             patch(MOCK_PATCHES["add_history"]) as mock_history, \
+             patch(MOCK_PATCHES["last_price"], return_value=None), \
+             patch(MOCK_PATCHES["is_garbage"], return_value=False):
+            result = run_price_pipeline("https://mercadolivre.com.br/produto", "mercadolivre")
+            assert result["status"] == "out_of_stock"
+            mock_history.assert_called_once_with(product_id="prod-1", price=None, in_stock=False)
 
 
 # ─── Sanity check path ────────────────────────────────────────────────────────

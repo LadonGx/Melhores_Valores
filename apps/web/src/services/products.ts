@@ -1,4 +1,10 @@
-import type { AddProductResponse, Product, ProductWithHistory, RefreshPriceResponse } from '@mv/types';
+import type {
+  AddProductResponse,
+  Product,
+  ProductStatus,
+  ProductWithHistory,
+  RefreshPriceResponse,
+} from '@mv/types';
 import { api } from './api';
 
 export const productsService = {
@@ -44,5 +50,9 @@ export const productsService = {
 
   updateName: async (productId: string, name: string): Promise<void> => {
     await api.patch(`/product/${productId}/name`, { name });
+  },
+
+  updateStatus: async (productId: string, status: ProductStatus): Promise<void> => {
+    await api.patch(`/product/${productId}/status`, { status });
   },
 };

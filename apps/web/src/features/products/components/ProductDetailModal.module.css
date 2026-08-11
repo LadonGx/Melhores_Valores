@@ -127,6 +127,23 @@
   color: var(--color-success);
 }
 
+.priceUnavailable {
+  color: var(--color-text-faint);
+  text-decoration: line-through;
+  font-weight: 500;
+}
+
+.unavailableBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  padding: 2px 6px;
+  border-radius: 99px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .inStock {
   font-size: 11px;
   font-weight: 600;
@@ -193,6 +210,13 @@
 
 .accordionChevronOpen {
   transform: rotate(180deg);
+}
+
+.warningIcon {
+  font-size: 14px;
+  flex-shrink: 0;
+  cursor: help;
+  line-height: 1;
 }
 
 .accordionBody {

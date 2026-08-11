@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
+import { Tooltip } from '@/components/Tooltip';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
 import { useProducts } from '@/features/products/hooks/useProducts';
@@ -32,6 +33,7 @@ function GroupRow({
   });
   const cheapest = sorted.find((p) => p.current_price != null);
   const thumb = groupProducts.find((p) => p.image_url)?.image_url;
+  const affected = groupProducts.filter((p) => p.in_stock === false);
 
   return (
     <div
@@ -47,7 +49,20 @@ function GroupRow({
         )}
 
         <div className={styles.productInfo}>
-          <span className={styles.productName}>{group.name}</span>
+          <div className={styles.productNameRow}>
+            <span className={styles.productName}>{group.name}</span>
+            {affected.length > 0 && (
+              <Tooltip
+                content={`${affected.length} anúncio${affected.length > 1 ? 's' : ''} deste grupo (${affected
+                  .map((p) => formatStore(p.store))
+                  .join(', ')}) pode${affected.length > 1 ? 'm' : ''} estar fora de estoque ou ter sido removido${affected.length > 1 ? 's' : ''}.`}
+              >
+                <span className={styles.warningIcon} onClick={(e) => e.stopPropagation()}>
+                  ⚠
+                </span>
+              </Tooltip>
+            )}
+          </div>
           <div className={styles.storeBadges}>
             {groupProducts.map((p) => (
               <span key={p.id} className={styles.storeBadge}>
@@ -94,12 +109,15 @@ function ProductRow({
     }
   };
 
+  const isPaused = product.status === 'paused';
+
   return (
     <div
       className={[
         styles.productRow,
         groupingMode ? styles.rowSelectable : '',
         selected ? styles.rowSelected : '',
+        isPaused ? styles.rowPaused : '',
       ].join(' ')}
       onClick={handleClick}
       style={{ cursor: 'pointer' }}
@@ -119,19 +137,40 @@ function ProductRow({
         )}
         <span className={styles.storeBadge}>{formatStore(product.store)}</span>
         <div className={styles.productInfo}>
-          <span className={styles.productName}>{product.name ?? product.url}</span>
+          <div className={styles.productNameRow}>
+            <span className={styles.productName}>{product.name ?? product.url}</span>
+            {(product.in_stock === false || isPaused) && (
+              <Tooltip
+                content={
+                  isPaused
+                    ? 'Monitoramento pausado pelo usuário. O histórico continua disponível.'
+                    : 'Este anúncio pode estar fora de estoque ou ter sido removido.'
+                }
+              >
+                <span className={styles.warningIcon} onClick={(e) => e.stopPropagation()}>
+                  {isPaused ? '⏸' : '⚠'}
+                </span>
+              </Tooltip>
+            )}
+          </div>
           {product.last_checked && (
             <span className={styles.lastChecked}>
               Verificado em {formatDate(product.last_checked)}
+              {isPaused ? ' · Pausado' : ''}
             </span>
           )}
         </div>
 
         <div className={styles.productMeta}>
           {product.in_stock === false && (
-            <span className={styles.outOfStockBadge}>Sem estoque</span>
+            <span className={styles.unavailableBadge}>Indisponível</span>
           )}
-          <span className={styles.currentPrice}>
+          <span
+            className={[
+              styles.currentPrice,
+              product.in_stock === false ? styles.currentPriceUnavailable : '',
+            ].join(' ')}
+          >
             {product.current_price != null ? formatCurrency(product.current_price) : '—'}
           </span>
           {!groupingMode && <span className={styles.detailHint}>Ver →</span>}

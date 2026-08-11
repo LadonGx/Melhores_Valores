@@ -15,6 +15,7 @@ model Product {
   name      String?
   imageUrl  String?
   store     String
+  status    String         @default("active")
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
   history   PriceHistory[]
