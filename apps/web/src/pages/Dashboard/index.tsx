@@ -10,6 +10,9 @@ import { useProductGroups } from '@/features/products/hooks/useProductGroups';
 import { usePromotions, useProducts, useRemoveProduct } from '@/features/products/hooks/useProducts';
 import type { Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
+import { FilterMenu } from './FilterMenu';
+import { sortRows, type DashboardRow } from './sortRows';
+import { useDashboardFilter } from './useDashboardFilter';
 import styles from './Dashboard.module.css';
 
 // ─── Group row ────────────────────────────────────────────────────────────────
@@ -186,11 +189,20 @@ type ModalTarget =
   | { type: 'group'; id: string }
   | null;
 
+function getGroupCheapestPrice(group: ProductGroup, products: Product[]): number | null {
+  const prices = group.productIds
+    .map((id) => products.find((p) => p.id === id)?.current_price)
+    .filter((price): price is number => price != null);
+  return prices.length > 0 ? Math.min(...prices) : null;
+}
+
 export function Dashboard() {
   const { data, isLoading } = useProducts();
   const products = data?.products ?? [];
   const { groups, createGroup, deleteGroup, ungroupProduct } = useProductGroups();
   const { mutateAsync: removeProduct, isPending: isDeleting } = useRemoveProduct();
+  const { sortOption, hiddenIds, setSortOption, toggleHidden, showAll, reset: resetFilter } =
+    useDashboardFilter();
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingGroupName, setPendingGroupName] = useState('');
@@ -212,7 +224,27 @@ export function Dashboard() {
   const totalProductsToDelete =
     selectedProducts.length + selectedGroups.reduce((sum, g) => sum + g.productIds.length, 0);
 
-  const allRowIds = [...groups.map((g) => g.id), ...ungroupedProducts.map((p) => p.id)];
+  // Lista unificada de grupos + avulsos, para ordenação e filtro de visibilidade em conjunto
+  const allRows: DashboardRow[] = [
+    ...groups.map((g) => ({
+      id: g.id,
+      type: 'group' as const,
+      name: g.name,
+      price: getGroupCheapestPrice(g, products),
+    })),
+    ...ungroupedProducts.map((p) => ({
+      id: p.id,
+      type: 'product' as const,
+      name: p.name ?? p.url,
+      price: p.current_price ?? null,
+    })),
+  ];
+  const visibleRows = sortRows(
+    allRows.filter((row) => !hiddenIds.includes(row.id)),
+    sortOption,
+  );
+
+  const allRowIds = visibleRows.map((row) => row.id);
   const allSelected = allRowIds.length > 0 && selectedIds.size === allRowIds.length;
 
   const toggleSelect = (id: string) => {
@@ -320,7 +352,20 @@ export function Dashboard() {
       </div>
 
       {/* ── Product list ── */}
-      <Card title="Produtos monitorados">
+      <Card
+        title="Produtos monitorados"
+        action={
+          <FilterMenu
+            rows={allRows}
+            sortOption={sortOption}
+            hiddenIds={hiddenIds}
+            onSortChange={setSortOption}
+            onToggleHidden={toggleHidden}
+            onShowAll={showAll}
+            onReset={resetFilter}
+          />
+        }
+      >
         {/* Selection toolbar */}
         {selectedIds.size > 0 && (
           <div className={styles.toolbar}>
@@ -380,27 +425,37 @@ export function Dashboard() {
             Nenhum produto monitorado.{' '}
             <a href="/products">Adicione seu primeiro produto.</a>
           </p>
+        ) : visibleRows.length === 0 ? (
+          <p className={styles.empty}>Nenhum produto corresponde ao filtro atual.</p>
         ) : (
           <div className={styles.productList}>
-            {groups.map((g) => (
-              <GroupRow
-                key={g.id}
-                group={g}
-                products={products}
-                selected={selectedIds.has(g.id)}
-                onToggleSelect={() => toggleSelect(g.id)}
-                onOpen={() => setModalTarget({ type: 'group', id: g.id })}
-              />
-            ))}
-            {ungroupedProducts.map((p) => (
-              <ProductRow
-                key={p.id}
-                product={p}
-                selected={selectedIds.has(p.id)}
-                onToggleSelect={() => toggleSelect(p.id)}
-                onOpen={() => setModalTarget({ type: 'product', id: p.id })}
-              />
-            ))}
+            {visibleRows.map((row) => {
+              if (row.type === 'group') {
+                const g = groups.find((group) => group.id === row.id);
+                if (!g) return null;
+                return (
+                  <GroupRow
+                    key={g.id}
+                    group={g}
+                    products={products}
+                    selected={selectedIds.has(g.id)}
+                    onToggleSelect={() => toggleSelect(g.id)}
+                    onOpen={() => setModalTarget({ type: 'group', id: g.id })}
+                  />
+                );
+              }
+              const p = ungroupedProducts.find((product) => product.id === row.id);
+              if (!p) return null;
+              return (
+                <ProductRow
+                  key={p.id}
+                  product={p}
+                  selected={selectedIds.has(p.id)}
+                  onToggleSelect={() => toggleSelect(p.id)}
+                  onOpen={() => setModalTarget({ type: 'product', id: p.id })}
+                />
+              );
+            })}
           </div>
         )}
       </Card>
