@@ -593,3 +593,15 @@ execution/
 - **Seletores CSS** da Amazon e Mercado Livre podem mudar se as lojas atualizarem o layout. Se um scraper retornar lista vazia, inspecione o HTML da página e atualize os seletores no arquivo correspondente — sem impactar o restante do sistema.
 - **Shopee usa API JSON interna**, sendo a mais estável dos três. Se parar de funcionar, verifique se o endpoint mudou de versão (`v4` → outra).
 - **O `search_id` retornado no `POST /search` é o `task.id` do Celery**, não um UUID gerado pelo orquestrador. O orquestrador gera seu próprio UUID internamente para agrupar os registros no banco. Para simplificar, considere alinhar os dois IDs se preferir usar apenas um identificador — mas isso é opcional para o MVP.
+
+---
+
+## 🔎 Adendo — Filtro de preço mínimo/máximo (implementado posteriormente)
+
+`POST /search` aceita `min_price` e `max_price` opcionais (float, inclusivos) no corpo, junto de `query`. Rejeita com `400` valores negativos ou `min_price > max_price`.
+
+Os limites são propagados por toda a cadeia — `web_server.py` → `task_search_products` (Celery) → `run_product_search` → `_filter_and_sort` em `execution/search_orchestrator.py` — e aplicados **antes de persistir** os resultados (mesmo ponto onde já existe o filtro de relevância). Não há filtragem em tempo de leitura no `GET /search/{search_id}`: cada busca precisa ser refeita para aplicar um novo filtro.
+
+Quando `min_price` e/ou `max_price` estão definidos, resultados sem preço identificado (`price is None`) são descartados — não há como garantir que respeitam a faixa pedida.
+
+Nenhum scraper ou adapter precisou mudar: `price` já chega como `float | None` normalizado antes desse ponto.

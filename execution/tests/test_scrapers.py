@@ -111,3 +111,47 @@ class TestFetchHtmlPlaywright:
             result = fetch_html_playwright("https://lista.mercadolivre.com.br/notebook")
 
         assert result is None
+
+    def test_wait_for_selectors_overrides_default_product_selectors(self):
+        """Listing/search pages need their own selectors (li.ui-search-layout__item, etc.),
+        never the hardcoded product-page selectors — otherwise every search wastes ~25s
+        waiting for selectors that can never appear on a listing page."""
+        chain = _mock_playwright_chain(html="<html>rendered</html>")
+        mock_page = chain.__enter__.return_value.chromium.launch.return_value.new_context.return_value.new_page.return_value
+
+        with patch("execution.scrapers.playwright_scraper.sync_playwright", return_value=chain):
+            fetch_html_playwright(
+                "https://lista.mercadolivre.com.br/notebook",
+                wait_for_selectors=("li.ui-search-layout__item", "span.andes-money-amount"),
+            )
+
+        waited_selectors = [call.args[0] for call in mock_page.wait_for_selector.call_args_list]
+        assert waited_selectors == ["li.ui-search-layout__item", "span.andes-money-amount"]
+
+    def test_warmup_url_is_visited_before_target_url(self):
+        """warmup_url should be navigated first (to establish cookies/session) before
+        the real target URL — used to reduce anti-bot false positives on listing pages."""
+        chain = _mock_playwright_chain(html="<html>rendered</html>")
+        mock_page = chain.__enter__.return_value.chromium.launch.return_value.new_context.return_value.new_page.return_value
+
+        with patch("execution.scrapers.playwright_scraper.sync_playwright", return_value=chain):
+            fetch_html_playwright(
+                "https://lista.mercadolivre.com.br/notebook",
+                warmup_url="https://www.mercadolivre.com.br/",
+            )
+
+        goto_urls = [call.args[0] for call in mock_page.goto.call_args_list]
+        assert goto_urls == [
+            "https://www.mercadolivre.com.br/",
+            "https://lista.mercadolivre.com.br/notebook",
+        ]
+
+    def test_no_warmup_url_navigates_only_to_target(self):
+        chain = _mock_playwright_chain(html="<html>rendered</html>")
+        mock_page = chain.__enter__.return_value.chromium.launch.return_value.new_context.return_value.new_page.return_value
+
+        with patch("execution.scrapers.playwright_scraper.sync_playwright", return_value=chain):
+            fetch_html_playwright("https://lista.mercadolivre.com.br/notebook")
+
+        goto_urls = [call.args[0] for call in mock_page.goto.call_args_list]
+        assert goto_urls == ["https://lista.mercadolivre.com.br/notebook"]

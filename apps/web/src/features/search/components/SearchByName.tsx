@@ -12,7 +12,21 @@ import type { SearchResult } from '@mv/types';
 import { formatCurrency, formatStore } from '@mv/utils';
 import styles from './SearchByName.module.css';
 
-const schema = z.object({ query: z.string().min(2, 'Mínimo de 2 caracteres') });
+const optionalPrice = z.preprocess(
+  (v) => (v === '' || v === undefined ? undefined : Number(v)),
+  z.number().nonnegative('Não pode ser negativo').optional(),
+);
+
+const schema = z
+  .object({
+    query: z.string().min(2, 'Mínimo de 2 caracteres'),
+    minPrice: optionalPrice,
+    maxPrice: optionalPrice,
+  })
+  .refine(
+    (data) => data.minPrice === undefined || data.maxPrice === undefined || data.minPrice <= data.maxPrice,
+    { message: 'Preço mínimo não pode ser maior que o máximo', path: ['maxPrice'] },
+  );
 type FormValues = z.infer<typeof schema>;
 
 // Tempo máximo aguardando o Celery processar (scrapers com Playwright podem ser lentos)
@@ -49,7 +63,7 @@ export function SearchByName() {
   // Cleanup do timeout ao desmontar
   useEffect(() => () => clearTimeout(timeoutRef.current), []);
 
-  const onSubmit = ({ query }: FormValues) => {
+  const onSubmit = ({ query, minPrice, maxPrice }: FormValues) => {
     clearTimeout(timeoutRef.current);
     setSearchId('');
     setIsSearchActive(true);
@@ -57,7 +71,7 @@ export function SearchByName() {
     // Timeout de segurança: após SEARCH_TIMEOUT_MS para de mostrar "buscando"
     timeoutRef.current = setTimeout(() => setIsSearchActive(false), SEARCH_TIMEOUT_MS);
 
-    startSearch(query, {
+    startSearch({ query, min_price: minPrice, max_price: maxPrice }, {
       onSuccess: (data) => setSearchId(data.task_id),
       onError: () => {
         setIsSearchActive(false);
@@ -144,6 +158,28 @@ export function SearchByName() {
           placeholder="ex: iPhone 15 128GB, Samsung Galaxy S24..."
           error={errors.query?.message}
           {...register('query')}
+        />
+        <Input
+          className={styles.priceField}
+          style={{ width: 130 }}
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          placeholder="Preço mín."
+          error={errors.minPrice?.message}
+          {...register('minPrice')}
+        />
+        <Input
+          className={styles.priceField}
+          style={{ width: 130 }}
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          placeholder="Preço máx."
+          error={errors.maxPrice?.message}
+          {...register('maxPrice')}
         />
         <Button type="submit" loading={isStarting || isWaiting}>
           {isWaiting ? 'Buscando...' : 'Buscar'}

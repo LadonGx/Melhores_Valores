@@ -13,10 +13,18 @@ export interface AddProductResponse {
   store: string;
 }
 
+export interface SearchRequest {
+  query: string;
+  min_price?: number | null;
+  max_price?: number | null;
+}
+
 export interface SearchResponse {
   status: 'processing';
   task_id: string;
   query: string;
+  min_price?: number | null;
+  max_price?: number | null;
   message: string;
 }
 

@@ -281,17 +281,26 @@ app.conf.beat_schedule = {
 # ─────────────────────────────────────────────
 
 @app.task(bind=True, name="search_products")
-def task_search_products(self, query: str) -> str:
+def task_search_products(
+    self,
+    query: str,
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> str:
     """
     Task Celery assíncrona que executa a busca de produtos por nome.
     Usa o próprio task.id como search_id para que o frontend consiga
     consultar os resultados via GET /search/{task_id}.
 
     Args:
-        query: Nome do produto a buscar (ex: "Galaxy S24").
+        query:     Nome do produto a buscar (ex: "Galaxy S24").
+        min_price: Preço mínimo opcional (inclusive) para filtrar os resultados.
+        max_price: Preço máximo opcional (inclusive) para filtrar os resultados.
 
     Returns:
         search_id = self.request.id (mesmo ID retornado pelo POST /search).
     """
-    return run_product_search(query, search_id=self.request.id)
+    return run_product_search(
+        query, min_price=min_price, max_price=max_price, search_id=self.request.id
+    )
 

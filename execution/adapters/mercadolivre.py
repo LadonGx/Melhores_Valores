@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
-_BLOCK_SIGNALS: dict[str, list[str]] = {
+BLOCK_SIGNALS: dict[str, list[str]] = {
     "login_wall":   ["acesse sua conta", "faça seu login", "faça login", "sign in"],
     "captcha":      ["captcha", "prove you're not a robot"],
     "rate_limited": ["rate limited", "too many requests", "429"],
@@ -15,13 +15,15 @@ _BLOCK_SIGNALS: dict[str, list[str]] = {
 }
 
 
-def _detect_block_category(soup) -> str | None:
+def detect_block_category(soup) -> str | None:
     """Returns block category if the page is an anti-bot/auth wall, else None."""
     combined = ""
     if soup.title:
         combined += soup.title.get_text(strip=True).lower() + " "
-    combined += soup.get_text()[:800].lower()
-    for category, signals in _BLOCK_SIGNALS.items():
+    # separador " " evita que texto de elementos inline adjacentes (ex: <span>acesse</span>
+    # <span>sua conta</span>) grude sem espaço e quebre o casamento das assinaturas
+    combined += soup.get_text(" ", strip=True)[:800].lower()
+    for category, signals in BLOCK_SIGNALS.items():
         if any(s in combined for s in signals):
             return category
     return None
@@ -154,7 +156,7 @@ def extract_from_html(html: str) -> dict | None:
     """
     soup = BeautifulSoup(html, "lxml")
 
-    block_category = _detect_block_category(soup)
+    block_category = detect_block_category(soup)
     if block_category:
         logger.warning(
             "MercadoLivre | bloqueio detectado | block_category=%s", block_category

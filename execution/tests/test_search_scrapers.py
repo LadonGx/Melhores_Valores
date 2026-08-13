@@ -130,6 +130,17 @@ class TestParseAmazonPrice:
 
 # ─── search_mercadolivre ──────────────────────────────────────────────────
 
+ML_LOGIN_WALL_HTML = """
+<html><head><title>Mercado Libre</title></head>
+<body>Olá! Para continuar, acesse sua conta. Sou novo. Já tenho conta.</body></html>
+"""
+
+ML_GENUINELY_EMPTY_HTML = """
+<html><head><title>Mercado Livre</title></head>
+<body>Não encontramos anúncios para essa busca.</body></html>
+"""
+
+
 class TestSearchMercadoLivre:
     def test_normal_extraction(self):
         with patch(
@@ -157,6 +168,30 @@ class TestSearchMercadoLivre:
             results = mercadolivre_search.search_mercadolivre("notebook gamer")
 
         assert results == []
+
+    def test_login_wall_is_logged_distinctly_from_genuine_empty_result(self, caplog):
+        """A block page and a genuinely empty search both yield []. But the anti-bot
+        block must be diagnosable in the logs — not silently identical to '0 resultados'."""
+        with caplog.at_level("WARNING", logger="execution.search_scrapers.mercadolivre_search"):
+            with patch(
+                "execution.search_scrapers.mercadolivre_search.fetch_html_playwright",
+                return_value=ML_LOGIN_WALL_HTML,
+            ):
+                results = mercadolivre_search.search_mercadolivre("notebook gamer")
+
+        assert results == []
+        assert any("bloqueado (login_wall)" in r.message for r in caplog.records)
+
+    def test_genuinely_empty_result_does_not_log_a_block_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="execution.search_scrapers.mercadolivre_search"):
+            with patch(
+                "execution.search_scrapers.mercadolivre_search.fetch_html_playwright",
+                return_value=ML_GENUINELY_EMPTY_HTML,
+            ):
+                results = mercadolivre_search.search_mercadolivre("produto inexistente")
+
+        assert results == []
+        assert not any("bloqueado" in r.message for r in caplog.records)
 
 
 class TestParseMlPrice:

@@ -48,6 +48,8 @@ class UpdateStatusRequest(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str
+    min_price: float | None = None
+    max_price: float | None = None
 
 
 @app.get("/products")
@@ -302,7 +304,7 @@ def search_products(request: SearchRequest):
     Recebe o nome do produto e dispara a busca assíncrona nas 3 lojas.
     Retorna imediatamente com o task_id — a busca roda em background no Celery.
 
-    Body: {"query": "iPhone 15 128GB"}
+    Body: {"query": "iPhone 15 128GB", "min_price": 20, "max_price": 500}
     """
     query = request.query.strip()
 
@@ -312,13 +314,26 @@ def search_products(request: SearchRequest):
     if len(query) < 2:
         raise HTTPException(status_code=400, detail="Query muito curta. Mínimo de 2 caracteres.")
 
-    task = task_search_products.delay(query)
+    min_price, max_price = request.min_price, request.max_price
+
+    if min_price is not None and min_price < 0:
+        raise HTTPException(status_code=400, detail="'min_price' não pode ser negativo.")
+
+    if max_price is not None and max_price < 0:
+        raise HTTPException(status_code=400, detail="'max_price' não pode ser negativo.")
+
+    if min_price is not None and max_price is not None and min_price > max_price:
+        raise HTTPException(status_code=400, detail="'min_price' não pode ser maior que 'max_price'.")
+
+    task = task_search_products.delay(query, min_price, max_price)
 
     return {
-        "status":  "processing",
-        "task_id": task.id,
-        "query":   query,
-        "message": "Busca iniciada. Use GET /search/{task_id} para consultar os resultados.",
+        "status":    "processing",
+        "task_id":   task.id,
+        "query":     query,
+        "min_price": min_price,
+        "max_price": max_price,
+        "message":   "Busca iniciada. Use GET /search/{task_id} para consultar os resultados.",
     }
 
 

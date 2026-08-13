@@ -6,12 +6,18 @@
 
 .form {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: flex-end;
 }
 
 .form > :first-child {
   flex: 1;
+  min-width: 200px;
+}
+
+.priceField {
+  flex-shrink: 0;
 }
 
 .status {

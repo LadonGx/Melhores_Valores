@@ -85,9 +85,48 @@ def _relevance_score(query: str, title: str) -> float:
     return matched_weight / total_weight if total_weight > 0 else 0.0
 
 
-def _filter_and_sort(query: str, results: list[dict]) -> list[dict]:
+def _filter_by_price(
+    results: list[dict],
+    min_price: float | None,
+    max_price: float | None,
+) -> list[dict]:
     """
-    Filter results below the relevance threshold, then sort by:
+    Discards results outside the [min_price, max_price] range. When either bound
+    is set, results with an unidentified price (price=None) are also discarded —
+    there's no way to guarantee they respect the requested range.
+    """
+    if min_price is None and max_price is None:
+        return results
+
+    filtered = []
+    for r in results:
+        price = r.get("price")
+        if price is None:
+            continue
+        if min_price is not None and price < min_price:
+            continue
+        if max_price is not None and price > max_price:
+            continue
+        filtered.append(r)
+
+    removed = len(results) - len(filtered)
+    if removed:
+        logger.info(
+            "Busca | %d resultado(s) descartados por filtro de preço | min=%s max=%s",
+            removed, min_price, max_price,
+        )
+    return filtered
+
+
+def _filter_and_sort(
+    query: str,
+    results: list[dict],
+    min_price: float | None = None,
+    max_price: float | None = None,
+) -> list[dict]:
+    """
+    Filter results below the relevance threshold and outside the price range,
+    then sort by:
     1. relevance score DESC (most relevant first)
     2. price ASC (cheapest within same relevance)
     """
@@ -106,15 +145,26 @@ def _filter_and_sort(query: str, results: list[dict]) -> list[dict]:
 
     # Sort: relevance DESC, price ASC (None prices go last)
     filtered.sort(key=lambda x: (-x[1], x[0].get("price") or float("inf")))
-    return [r for r, _ in filtered]
+
+    priced = _filter_by_price([r for r, _ in filtered], min_price, max_price)
+    return priced
 
 
-def run_product_search(query: str, search_id: str | None = None) -> str:
+def run_product_search(
+    query: str,
+    min_price: float | None = None,
+    max_price: float | None = None,
+    search_id: str | None = None,
+) -> str:
     """
     Searches for products by name across stores and persists the results.
 
     Args:
         query:     Search term from the user (e.g. "iPhone 15 128GB").
+        min_price: Optional lower price bound (inclusive). Results without a
+                   known price are discarded when this is set.
+        max_price: Optional upper price bound (inclusive). Results without a
+                   known price are discarded when this is set.
         search_id: External ID to use (e.g. Celery task ID). Generates UUID if None.
 
     Returns:
@@ -137,7 +187,7 @@ def run_product_search(query: str, search_id: str | None = None) -> str:
         except Exception:
             logger.exception("Busca | store=%s falhou | query='%s'", store_name, query)
 
-    relevant_results = _filter_and_sort(query, all_results)
+    relevant_results = _filter_and_sort(query, all_results, min_price, max_price)
 
     saved = save_search_results(search_id, query, relevant_results)
     logger.info(
