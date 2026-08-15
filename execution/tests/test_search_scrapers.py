@@ -7,11 +7,13 @@ fallback when the underlying fetch fails. No test touches the real network —
 httpx / fetch_html_playwright are always mocked.
 """
 
+import pytest
 from unittest.mock import patch, MagicMock
 
 from bs4 import BeautifulSoup
 
 from execution.search_scrapers import amazon_search, mercadolivre_search
+from execution.search_scrapers.errors import StoreBlockedError
 
 
 # ─── HTML Fixtures ───────────────────────────────────────────────────────────
@@ -130,6 +132,17 @@ class TestParseAmazonPrice:
 
 # ─── search_mercadolivre ──────────────────────────────────────────────────
 
+ML_LOGIN_WALL_HTML = """
+<html><head><title>Mercado Libre</title></head>
+<body>Olá! Para continuar, acesse sua conta. Sou novo. Já tenho conta.</body></html>
+"""
+
+ML_GENUINELY_EMPTY_HTML = """
+<html><head><title>Mercado Livre</title></head>
+<body>Não encontramos anúncios para essa busca.</body></html>
+"""
+
+
 class TestSearchMercadoLivre:
     def test_normal_extraction(self):
         with patch(
@@ -157,6 +170,31 @@ class TestSearchMercadoLivre:
             results = mercadolivre_search.search_mercadolivre("notebook gamer")
 
         assert results == []
+
+    def test_login_wall_raises_store_blocked_error(self, caplog):
+        """A block page must be diagnosable and propagated — not silently identical
+        to a genuinely empty search (which just returns [])."""
+        with caplog.at_level("WARNING", logger="execution.search_scrapers.mercadolivre_search"):
+            with patch(
+                "execution.search_scrapers.mercadolivre_search.fetch_html_playwright",
+                return_value=ML_LOGIN_WALL_HTML,
+            ):
+                with pytest.raises(StoreBlockedError) as exc_info:
+                    mercadolivre_search.search_mercadolivre("notebook gamer")
+
+        assert exc_info.value.category == "login_wall"
+        assert any("bloqueado (login_wall)" in r.message for r in caplog.records)
+
+    def test_genuinely_empty_result_does_not_log_a_block_warning(self, caplog):
+        with caplog.at_level("WARNING", logger="execution.search_scrapers.mercadolivre_search"):
+            with patch(
+                "execution.search_scrapers.mercadolivre_search.fetch_html_playwright",
+                return_value=ML_GENUINELY_EMPTY_HTML,
+            ):
+                results = mercadolivre_search.search_mercadolivre("produto inexistente")
+
+        assert results == []
+        assert not any("bloqueado" in r.message for r in caplog.records)
 
 
 class TestParseMlPrice:

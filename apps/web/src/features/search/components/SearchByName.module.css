@@ -6,12 +6,18 @@
 
 .form {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: flex-end;
 }
 
 .form > :first-child {
   flex: 1;
+  min-width: 200px;
+}
+
+.priceField {
+  flex-shrink: 0;
 }
 
 .status {
@@ -40,6 +46,17 @@
 .empty {
   font-size: 13px;
   color: var(--color-text-muted);
+}
+
+.warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
 }
 
 .badge {

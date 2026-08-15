@@ -9,7 +9,7 @@ _Ambiente de Desenvolvimento:_ Google Antigravity (Agent-First IDE)
 
 ### 💡 A Ideia Central
 
-O projeto é uma plataforma automatizada de rastreamento de preços de e-commerce (Amazon, Mercado Livre, AliExpress). O objetivo é permitir que o usuário insira o link de um produto e o sistema, de forma autônoma e em segundo plano, monitore o preço desse item ao longo do tempo.
+O projeto é uma plataforma automatizada de rastreamento de preços de e-commerce (Amazon, Mercado Livre). O objetivo é permitir que o usuário insira o link de um produto e o sistema, de forma autônoma e em segundo plano, monitore o preço desse item ao longo do tempo.
 
 ### 🎯 O Problema que Resolvemos
 

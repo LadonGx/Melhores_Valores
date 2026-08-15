@@ -1,12 +1,12 @@
 """
-Unit tests for store adapters (amazon, mercadolivre, aliexpress).
+Unit tests for store adapters (amazon, mercadolivre).
 
 Tests cover: normal extraction, block detection, out-of-stock detection,
 price parsing edge cases, and confirmed-unavailable signal propagation.
 """
 
 import pytest
-from execution.adapters import amazon, mercadolivre, aliexpress, parse_product_data
+from execution.adapters import amazon, mercadolivre, parse_product_data
 
 
 # ─── HTML Fixtures ───────────────────────────────────────────────────────────
@@ -159,44 +159,6 @@ MERCADOLIVRE_OUT_OF_STOCK_JSON_LD = """
 </body></html>
 """
 
-ALIEXPRESS_NORMAL = """
-<html><head><title>Produto - AliExpress</title></head>
-<body>
-  <h1 data-pl="product-title">Fone de Ouvido Bluetooth</h1>
-  <span class="currentPriceText--V8_y_">US $12.99</span>
-</body></html>
-"""
-
-ALIEXPRESS_OUT_OF_STOCK = """
-<html><head><title>Produto - AliExpress</title></head>
-<body>
-  <h1 data-pl="product-title">Fone de Ouvido Bluetooth</h1>
-  <div>This item is no longer available</div>
-</body></html>
-"""
-
-ALIEXPRESS_SOLD_OUT = """
-<html><head><title>Produto - AliExpress</title></head>
-<body>
-  <h1 data-pl="product-title">Teclado Mecânico</h1>
-  <div class="product-status">Sold out</div>
-</body></html>
-"""
-
-ALIEXPRESS_BLOCKED = """
-<html><head><title>AliExpress</title></head>
-<body>Just a moment... Cloudflare checking your browser</body>
-</html>
-"""
-
-ALIEXPRESS_NO_PRICE = """
-<html><head><title>Produto - AliExpress</title></head>
-<body>
-  <h1 data-pl="product-title">Fone de Ouvido</h1>
-</body></html>
-"""
-
-
 # ─── Amazon Tests ─────────────────────────────────────────────────────────────
 
 class TestAmazonAdapter:
@@ -316,57 +278,18 @@ class TestMercadoLivreAdapter:
         assert result["confidence_score"] >= 0.55
 
 
-# ─── AliExpress Tests ─────────────────────────────────────────────────────────
-
-class TestAliExpressAdapter:
-    def test_normal_extraction(self):
-        result = aliexpress.extract_from_html(ALIEXPRESS_NORMAL)
-        assert result is not None
-        assert result["price"] == 12.99
-        assert result["in_stock"] is True
-        assert result["name"] == "Fone de Ouvido Bluetooth"
-        assert result["block_category"] is None
-
-    def test_no_longer_available_signal(self):
-        result = aliexpress.extract_from_html(ALIEXPRESS_OUT_OF_STOCK)
-        assert result is not None
-        assert result["in_stock"] is False
-        assert result["price"] is None
-        assert result["confidence_score"] >= 0.55
-
-    def test_sold_out_signal(self):
-        result = aliexpress.extract_from_html(ALIEXPRESS_SOLD_OUT)
-        assert result is not None
-        assert result["in_stock"] is False
-        assert result["price"] is None
-
-    def test_cloudflare_returns_block_category(self):
-        result = aliexpress.extract_from_html(ALIEXPRESS_BLOCKED)
-        assert result is not None
-        assert result["block_category"] == "challenge_js"
-        assert result["price"] is None
-
-    def test_no_price_no_stock_signal_returns_none(self):
-        result = aliexpress.extract_from_html(ALIEXPRESS_NO_PRICE)
-        assert result is None
-
-    def test_empty_html_returns_none(self):
-        result = aliexpress.extract_from_html("<html></html>")
-        assert result is None
-
-
 # ─── Firecrawl path: extract_in_stock / parse_product_data ───────────────────
 
 class TestFirecrawlInStockExtraction:
     """Regressão: o caminho do Firecrawl (usado quando httpx/Playwright são bloqueados)
     precisa propagar 'in_stock' — antes desse fix, ele nunca setava essa chave."""
 
-    @pytest.mark.parametrize("adapter", [amazon, mercadolivre, aliexpress])
+    @pytest.mark.parametrize("adapter", [amazon, mercadolivre])
     def test_extract_in_stock_false_when_unavailable(self, adapter):
         payload = {"data": {"metadata": {"title": "Produto", "price": 0, "available": False}}}
         assert adapter.extract_in_stock(payload) is False
 
-    @pytest.mark.parametrize("adapter", [amazon, mercadolivre, aliexpress])
+    @pytest.mark.parametrize("adapter", [amazon, mercadolivre])
     def test_extract_in_stock_defaults_true_when_missing(self, adapter):
         payload = {"data": {"metadata": {"title": "Produto", "price": 199.90}}}
         assert adapter.extract_in_stock(payload) is True
@@ -401,11 +324,3 @@ class TestPriceParsing:
     def test_amazon_garbage_returns_none(self):
         val = amazon._parse_price_text("indisponível")
         assert val is None
-
-    def test_aliexpress_usd_format(self):
-        val = aliexpress._parse_price_text("US $12.99")
-        assert val == 12.99
-
-    def test_aliexpress_brl_format(self):
-        val = aliexpress._parse_price_text("R$ 1.299,00")
-        assert val == 1299.0

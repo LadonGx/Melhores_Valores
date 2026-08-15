@@ -2,7 +2,6 @@ from urllib.parse import urlparse
 
 SUPPORTED_STORE_PATTERNS: dict[str, tuple[str, ...]] = {
     "amazon": ("amazon.",),
-    "aliexpress": ("aliexpress.",),
     "mercadolivre": ("mercadolivre.",),
 }
 

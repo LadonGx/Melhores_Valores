@@ -13,10 +13,18 @@ export interface AddProductResponse {
   store: string;
 }
 
+export interface SearchRequest {
+  query: string;
+  min_price?: number | null;
+  max_price?: number | null;
+}
+
 export interface SearchResponse {
   status: 'processing';
   task_id: string;
   query: string;
+  min_price?: number | null;
+  max_price?: number | null;
   message: string;
 }
 
@@ -24,11 +32,13 @@ export interface SearchResultsResponse {
   search_id: string;
   total: number;
   results: SearchResult[];
+  // Lojas que bloquearam essa busca, ex: { mercadolivre: 'login_wall' }
+  store_warnings?: Record<string, string>;
 }
 
 // ─── Domain Models ────────────────────────────────────────────────────────────
 
-export type Store = 'amazon' | 'mercadolivre' | 'aliexpress' | string;
+export type Store = 'amazon' | 'mercadolivre' | string;
 
 export type ProductStatus = 'active' | 'paused';
 

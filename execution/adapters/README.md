@@ -14,7 +14,6 @@ Parse raw HTML from each e-commerce store into a normalized product dict. Each a
 |---|---|---|
 | `amazon.py` | Amazon BR | Handles JS-rendered and static HTML variants |
 | `mercadolivre.py` | Mercado Livre | Always receives Playwright-rendered HTML |
-| `aliexpress.py` | AliExpress | Always receives Playwright-rendered HTML |
 
 ## Interface Contract
 
@@ -39,7 +38,7 @@ Only `scraping_orchestrator.py`. Never call adapters directly from tasks or web_
 
 ```python
 # In scraping_orchestrator.py:
-from execution.adapters import amazon, mercadolivre, aliexpress
+from execution.adapters import amazon, mercadolivre
 
 result = amazon.parse_product(html)
 ```

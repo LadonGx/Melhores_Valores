@@ -3,7 +3,14 @@ import re
 
 from bs4 import BeautifulSoup
 
+from ..adapters.mercadolivre import detect_block_category
 from ..scrapers.playwright_scraper import fetch_html_playwright
+from .errors import StoreBlockedError
+
+# Página de listagem/busca do ML — nunca tem os seletores de página de produto
+# que fetch_html_playwright espera por padrão, então usamos os nossos próprios.
+_SEARCH_WAIT_SELECTORS = ("li.ui-search-layout__item", "span.andes-money-amount")
+_WARMUP_URL = "https://www.mercadolivre.com.br/"
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +78,12 @@ def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
     clean = re.sub(r"\s+", "-", clean)
     url = f"https://lista.mercadolivre.com.br/{clean}"
 
-    html = fetch_html_playwright(url, wait_ms=3000)
+    html = fetch_html_playwright(
+        url,
+        wait_ms=3000,
+        wait_for_selectors=_SEARCH_WAIT_SELECTORS,
+        warmup_url=_WARMUP_URL,
+    )
     if not html:
         logger.warning("mercadolivre_search | Playwright sem HTML | query='%s'", query)
         return []
@@ -79,6 +91,15 @@ def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
     results = []
     soup  = BeautifulSoup(html, "lxml")
     items = soup.select("li.ui-search-layout__item")
+
+    if not items:
+        block_category = detect_block_category(soup)
+        if block_category:
+            logger.warning(
+                "mercadolivre_search | bloqueado (%s) | query='%s'",
+                block_category, query,
+            )
+            raise StoreBlockedError(block_category)
 
     for item in items[:max_results]:
         try:

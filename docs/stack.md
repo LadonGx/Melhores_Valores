@@ -43,7 +43,7 @@
 
 ### Playwright (Python)
 - Chromium-based browser automation for Level 2 scraping
-- Used for JS-heavy pages (all MercadoLivre, AliExpress)
+- Used for JS-heavy pages (all MercadoLivre)
 - Runs in headless mode
 
 ### Firecrawl API

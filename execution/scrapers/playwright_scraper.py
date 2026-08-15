@@ -13,7 +13,12 @@ window.chrome = { runtime: {} };
 """
 
 
-def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
+def fetch_html_playwright(
+    url: str,
+    wait_ms: int = 3000,
+    wait_for_selectors: tuple[str, ...] | None = None,
+    warmup_url: str | None = None,
+) -> str | None:
     """
     Nível 2 da cascata: renderização completa com Playwright.
     Usa domcontentloaded (mais rápido e confiável que networkidle) e aguarda
@@ -21,6 +26,13 @@ def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
 
     Inclui evasão básica de anti-bot: remove navigator.webdriver e outros
     sinais de automação que sites como Magalu e Mercado Livre detectam.
+
+    Args:
+        wait_for_selectors: seletores a aguardar após o load (substitui os
+            seletores padrão de página de produto — útil para páginas de
+            listagem/busca, que nunca têm esses seletores).
+        warmup_url: se informado, é visitada antes de `url` no mesmo contexto/
+            sessão, para estabelecer cookies como uma navegação orgânica faria.
     """
     try:
         with sync_playwright() as p:
@@ -50,6 +62,15 @@ def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
 
             context.route("**/*", block_unnecessary)
             page = context.new_page()
+            if warmup_url:
+                # Visita a home primeiro para estabelecer cookies/sessão antes do
+                # request "suspeito" ir direto para a página alvo (reduz a chance
+                # de acionar muralhas anti-bot em páginas de listagem/busca).
+                try:
+                    page.goto(warmup_url, timeout=15000, wait_until="domcontentloaded")
+                    page.wait_for_timeout(1500)
+                except Exception:
+                    pass
             # domcontentloaded: aguarda só o HTML/CSS, sem esperar requests assíncronos infinitos
             page.goto(url, timeout=30000, wait_until="domcontentloaded")
             # Aguarda JS renderizar o conteúdo no DOM (baseline)
@@ -69,7 +90,7 @@ def fetch_html_playwright(url: str, wait_ms: int = 3000) -> str | None:
                 ".ui-pdp-price__second-line",
                 "[class*='currentPriceText']",
             )
-            for sel in _PRICE_SELECTORS:
+            for sel in (wait_for_selectors or _PRICE_SELECTORS):
                 try:
                     page.wait_for_selector(sel, timeout=5000)
                     break

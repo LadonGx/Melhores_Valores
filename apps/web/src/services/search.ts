@@ -1,9 +1,9 @@
-import type { SearchResponse, SearchResultsResponse } from '@mv/types';
+import type { SearchRequest, SearchResponse, SearchResultsResponse } from '@mv/types';
 import { api } from './api';
 
 export const searchService = {
-  start: async (query: string): Promise<SearchResponse> => {
-    const { data } = await api.post<SearchResponse>('/search', { query });
+  start: async (params: SearchRequest): Promise<SearchResponse> => {
+    const { data } = await api.post<SearchResponse>('/search', params);
     return data;
   },
 

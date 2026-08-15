@@ -4,10 +4,22 @@
   "scripts": {
     "dev": "pnpm --filter @mv/web dev",
     "build": "pnpm --filter @mv/web build",
-    "preview": "pnpm --filter @mv/web preview"
+    "preview": "pnpm --filter @mv/web preview",
+    "lint": "eslint .",
+    "typecheck": "pnpm --filter @mv/web typecheck",
+    "test": "pnpm --filter @mv/web test"
   },
   "engines": {
     "node": ">=20",
     "pnpm": ">=9"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "eslint": "^9.9.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "eslint-plugin-react-refresh": "^0.4.9",
+    "globals": "^15.9.0",
+    "typescript": "^5.5.3",
+    "typescript-eslint": "^8.0.1"
   }
 }

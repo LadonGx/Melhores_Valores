@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
+import type { SearchRequest } from '@mv/types';
 import { searchService } from '@/services/search';
 
 export const searchKeys = {
@@ -19,6 +20,6 @@ export function useSearchResults(searchId: string) {
 
 export function useStartSearch() {
   return useMutation({
-    mutationFn: (query: string) => searchService.start(query),
+    mutationFn: (params: SearchRequest) => searchService.start(params),
   });
 }

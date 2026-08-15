@@ -21,7 +21,7 @@ Async (Celery worker):
   │
   └─ MISS: scraping_orchestrator.run(url, store)
       ├─ Level 1 (httpx) → adapter → { name, price, image_url } or None
-      ├─ Level 2 (Playwright) → adapter → ... or None  [always for MercadoLivre/AliExpress]
+      ├─ Level 2 (Playwright) → adapter → ... or None  [always for MercadoLivre]
       └─ Level 3 (Firecrawl) → adapter → ... or None  [only if L1+L2 failed]
           │
           └─ db_client.get_or_create_product(url, store, name, imageUrl)

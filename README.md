@@ -1,6 +1,6 @@
 # Melhores Valores
 
-Rastreador de preços e API de busca para plataformas de e-commerce brasileiras (Amazon BR, Mercado Livre, AliExpress). O sistema monitora preços automaticamente, mantém histórico e permite buscas em tempo real, utilizando uma arquitetura resiliente de web scraping.
+Rastreador de preços e API de busca para plataformas de e-commerce brasileiras (Amazon BR, Mercado Livre). O sistema monitora preços automaticamente, mantém histórico e permite buscas em tempo real, utilizando uma arquitetura resiliente de web scraping.
 
 ---
 
@@ -159,7 +159,7 @@ POST /monitor/add {"url": "..."}
       1. httpx (rápido, gratuito)
       2. Playwright/Chromium (mais lento, gratuito)
       3. Firecrawl API (pago, último recurso)
-  → Roteia para o adapter da loja (amazon/mercadolivre/aliexpress)
+  → Roteia para o adapter da loja (amazon/mercadolivre)
   → Salva no PostgreSQL via Prisma → atualiza cache no Redis
 ```
 

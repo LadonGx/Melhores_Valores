@@ -12,7 +12,33 @@ import type { SearchResult } from '@mv/types';
 import { formatCurrency, formatStore } from '@mv/utils';
 import styles from './SearchByName.module.css';
 
-const schema = z.object({ query: z.string().min(2, 'Mínimo de 2 caracteres') });
+const BLOCK_CATEGORY_LABELS: Record<string, string> = {
+  login_wall: 'temporariamente exigindo login para acessar a busca',
+  captcha: 'temporariamente exigindo verificação anti-robô (captcha)',
+  rate_limited: 'limitando as requisições no momento',
+  challenge_js: 'com uma verificação de segurança ativa',
+  access_denied: 'recusando o acesso no momento',
+};
+
+function describeStoreBlock(category: string): string {
+  return BLOCK_CATEGORY_LABELS[category] ?? 'indisponível no momento';
+}
+
+const optionalPrice = z.preprocess(
+  (v) => (v === '' || v === undefined ? undefined : Number(v)),
+  z.number().nonnegative('Não pode ser negativo').optional(),
+);
+
+const schema = z
+  .object({
+    query: z.string().min(2, 'Mínimo de 2 caracteres'),
+    minPrice: optionalPrice,
+    maxPrice: optionalPrice,
+  })
+  .refine(
+    (data) => data.minPrice === undefined || data.maxPrice === undefined || data.minPrice <= data.maxPrice,
+    { message: 'Preço mínimo não pode ser maior que o máximo', path: ['maxPrice'] },
+  );
 type FormValues = z.infer<typeof schema>;
 
 // Tempo máximo aguardando o Celery processar (scrapers com Playwright podem ser lentos)
@@ -49,7 +75,7 @@ export function SearchByName() {
   // Cleanup do timeout ao desmontar
   useEffect(() => () => clearTimeout(timeoutRef.current), []);
 
-  const onSubmit = ({ query }: FormValues) => {
+  const onSubmit = ({ query, minPrice, maxPrice }: FormValues) => {
     clearTimeout(timeoutRef.current);
     setSearchId('');
     setIsSearchActive(true);
@@ -57,7 +83,7 @@ export function SearchByName() {
     // Timeout de segurança: após SEARCH_TIMEOUT_MS para de mostrar "buscando"
     timeoutRef.current = setTimeout(() => setIsSearchActive(false), SEARCH_TIMEOUT_MS);
 
-    startSearch(query, {
+    startSearch({ query, min_price: minPrice, max_price: maxPrice }, {
       onSuccess: (data) => setSearchId(data.task_id),
       onError: () => {
         setIsSearchActive(false);
@@ -145,6 +171,28 @@ export function SearchByName() {
           error={errors.query?.message}
           {...register('query')}
         />
+        <Input
+          className={styles.priceField}
+          style={{ width: 130 }}
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          placeholder="Preço mín."
+          error={errors.minPrice?.message}
+          {...register('minPrice')}
+        />
+        <Input
+          className={styles.priceField}
+          style={{ width: 130 }}
+          type="number"
+          inputMode="decimal"
+          step="0.01"
+          min="0"
+          placeholder="Preço máx."
+          error={errors.maxPrice?.message}
+          {...register('maxPrice')}
+        />
         <Button type="submit" loading={isStarting || isWaiting}>
           {isWaiting ? 'Buscando...' : 'Buscar'}
         </Button>
@@ -156,6 +204,14 @@ export function SearchByName() {
           <span>Buscando em Amazon e Mercado Livre... Pode levar até 30s.</span>
         </div>
       )}
+
+      {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => (
+        <div key={store} className={styles.warning}>
+          <span>
+            {formatStore(store)} está {describeStoreBlock(category)} — mostrando resultados de outras lojas.
+          </span>
+        </div>
+      ))}
 
       {showEmpty && (
         <p className={styles.empty}>Nenhum resultado encontrado. Tente um termo diferente.</p>

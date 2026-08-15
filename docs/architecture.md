@@ -39,7 +39,7 @@
                                 │ raw HTML
                      ┌──────────▼────────────────────────────────┐
                      │  adapters/                                 │
-                     │  amazon.py  mercadolivre.py  aliexpress.py│
+                     │  amazon.py  mercadolivre.py                │
                      │  → { name, price, image_url }             │
                      └────────────────────────────────────────────┘
 ```
@@ -69,7 +69,7 @@
 - Tries Level 1 (httpx) → adapter → validate
 - If None or garbage: tries Level 2 (Playwright) → adapter → validate
 - If still None: tries Level 3 (Firecrawl) → adapter → validate
-- JS-required stores (mercadolivre, aliexpress) skip Level 1
+- JS-required stores (mercadolivre) skip Level 1
 
 ### 5. Adapters (execution/adapters/)
 - Input: raw HTML string + store string
