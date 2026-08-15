@@ -10,7 +10,7 @@ Single source of truth for all TypeScript interfaces and types shared between fr
 
 ### Domain Types
 ```typescript
-type Store = 'amazon' | 'mercadolivre' | 'aliexpress' | string
+type Store = 'amazon' | 'mercadolivre' | string
 
 interface Product {
   id: string

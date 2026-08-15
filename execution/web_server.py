@@ -10,6 +10,7 @@ from .db_client import (
     get_product_by_id, get_product_with_history, get_products_with_history,
     get_search_results, update_product_name, update_product_status,
 )
+from .search_status import get_search_warnings
 from .store_detection import detect_store_from_url
 from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
 
@@ -351,4 +352,6 @@ def get_search_results_endpoint(search_id: str):
         "total":     len(results),
         # mode='json' garante que datetime (found_at) seja serializado como ISO string
         "results":   [r.model_dump(mode="json") for r in results],
+        # Lojas que bloquearam essa busca (ex: {"mercadolivre": "login_wall"}) — {} se nenhuma
+        "store_warnings": get_search_warnings(search_id),
     }

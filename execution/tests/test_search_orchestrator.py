@@ -7,9 +7,10 @@ set, relevance filtering still applies alongside the price filter, and
 run_product_search threads min_price/max_price through to persistence.
 """
 
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from execution.search_orchestrator import _filter_and_sort, _filter_by_price, run_product_search
+from execution.search_scrapers.errors import StoreBlockedError
 
 
 def _result(title="Produto Teste", price=None, store="amazon"):
@@ -74,3 +75,43 @@ class TestRunProductSearchThreadsPriceBounds:
             run_product_search("echo dot", min_price=20.0, max_price=100.0, search_id="sid-1")
 
         mock_filter.assert_called_once_with("echo dot", [], 20.0, 100.0)
+
+
+def _make_search_fn(module_name: str, *, raises: Exception | None = None, results=None):
+    """Builds a fake search function mimicking search_amazon/search_mercadolivre's
+    shape (a plain function whose __module__ names the store)."""
+    def fn(query, max_results=10):
+        if raises:
+            raise raises
+        return results or []
+    fn.__module__ = f"execution.search_scrapers.{module_name}"
+    return fn
+
+
+class TestRunProductSearchHandlesStoreBlocks:
+    def test_blocked_store_does_not_stop_other_stores(self):
+        blocked_fn = _make_search_fn("mercadolivre_search", raises=StoreBlockedError("login_wall"))
+        ok_fn = _make_search_fn(
+            "amazon_search",
+            results=[{"title": "iPhone 15", "price": 100.0, "store": "amazon", "product_url": "https://x"}],
+        )
+
+        with patch("execution.search_orchestrator.SEARCH_FUNCTIONS", [blocked_fn, ok_fn]), \
+             patch("execution.search_orchestrator.set_search_warnings") as mock_set_warnings, \
+             patch("execution.search_orchestrator.save_search_results", return_value=1) as mock_save:
+            run_product_search("iPhone 15", search_id="sid-2")
+
+        mock_set_warnings.assert_called_once_with("sid-2", {"mercadolivre": "login_wall"})
+        saved_results = mock_save.call_args[0][2]
+        assert len(saved_results) == 1
+        assert saved_results[0]["store"] == "amazon"
+
+    def test_no_warnings_persisted_when_nothing_is_blocked(self):
+        ok_fn = _make_search_fn("amazon_search", results=[])
+
+        with patch("execution.search_orchestrator.SEARCH_FUNCTIONS", [ok_fn]), \
+             patch("execution.search_orchestrator.set_search_warnings") as mock_set_warnings, \
+             patch("execution.search_orchestrator.save_search_results", return_value=0):
+            run_product_search("echo dot", search_id="sid-3")
+
+        mock_set_warnings.assert_not_called()

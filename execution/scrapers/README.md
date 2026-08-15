@@ -40,7 +40,7 @@ html = playwright_scraper.fetch(url)   # Level 2
 
 ## Level Selection Rules (enforced by orchestrator)
 
-- `mercadolivre` and `aliexpress`: **skip Level 1**, always start at Level 2 (require JS)
+- `mercadolivre`: **skip Level 1**, always start at Level 2 (require JS)
 - `amazon`: start at Level 1, escalate to Level 2 on failure
 - Any store: escalate to Level 3 (Firecrawl) only when Level 1 AND Level 2 both return None
 

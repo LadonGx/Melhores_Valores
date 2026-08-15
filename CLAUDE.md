@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Melhores Valores** is a price tracker API for Brazilian e-commerce platforms (Amazon BR, Mercado Livre, AliExpress). It monitors product prices via web scraping and provides product search functionality.
+**Melhores Valores** is a price tracker API for Brazilian e-commerce platforms (Amazon BR, Mercado Livre). It monitors product prices via web scraping and provides product search functionality.
 
 ## Monorepo Structure
 
@@ -79,7 +79,7 @@ POST /monitor/add {"url": "..."}
       1. httpx (fast, free)
       2. Playwright/Chromium (slower, free)
       3. Firecrawl API (paid, last resort)
-  → Route to store adapter (amazon/mercadolivre/aliexpress)
+  → Route to store adapter (amazon/mercadolivre)
   → Save to PostgreSQL via Prisma → update Redis cache
 ```
 
@@ -105,7 +105,7 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 | `execution/scraping_orchestrator.py` | 3-level cascade scraping strategy |
 | `execution/search_orchestrator.py` | Multi-store search coordination |
 | `execution/cache_manager.py` | Redis get/set with SHA256 URL keys |
-| `execution/adapters/` | Store-specific HTML parsers (amazon, mercadolivre, aliexpress) |
+| `execution/adapters/` | Store-specific HTML parsers (amazon, mercadolivre) |
 | `execution/scrapers/` | HTTP fetching strategies (httpx, Playwright) |
 | `execution/search_scrapers/` | Store search page scrapers |
 | `schema.prisma` | DB schema: `Product`, `PriceHistory`, `SearchResult` |

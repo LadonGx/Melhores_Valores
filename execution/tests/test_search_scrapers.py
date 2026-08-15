@@ -7,11 +7,13 @@ fallback when the underlying fetch fails. No test touches the real network —
 httpx / fetch_html_playwright are always mocked.
 """
 
+import pytest
 from unittest.mock import patch, MagicMock
 
 from bs4 import BeautifulSoup
 
 from execution.search_scrapers import amazon_search, mercadolivre_search
+from execution.search_scrapers.errors import StoreBlockedError
 
 
 # ─── HTML Fixtures ───────────────────────────────────────────────────────────
@@ -169,17 +171,18 @@ class TestSearchMercadoLivre:
 
         assert results == []
 
-    def test_login_wall_is_logged_distinctly_from_genuine_empty_result(self, caplog):
-        """A block page and a genuinely empty search both yield []. But the anti-bot
-        block must be diagnosable in the logs — not silently identical to '0 resultados'."""
+    def test_login_wall_raises_store_blocked_error(self, caplog):
+        """A block page must be diagnosable and propagated — not silently identical
+        to a genuinely empty search (which just returns [])."""
         with caplog.at_level("WARNING", logger="execution.search_scrapers.mercadolivre_search"):
             with patch(
                 "execution.search_scrapers.mercadolivre_search.fetch_html_playwright",
                 return_value=ML_LOGIN_WALL_HTML,
             ):
-                results = mercadolivre_search.search_mercadolivre("notebook gamer")
+                with pytest.raises(StoreBlockedError) as exc_info:
+                    mercadolivre_search.search_mercadolivre("notebook gamer")
 
-        assert results == []
+        assert exc_info.value.category == "login_wall"
         assert any("bloqueado (login_wall)" in r.message for r in caplog.records)
 
     def test_genuinely_empty_result_does_not_log_a_block_warning(self, caplog):

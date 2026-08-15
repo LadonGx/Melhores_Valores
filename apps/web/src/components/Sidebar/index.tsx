@@ -5,8 +5,6 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/products', label: 'Produtos', end: false },
   { to: '/search', label: 'Buscar produto', end: false },
-  { to: '/history', label: 'Histórico', end: false },
-  { to: '/settings', label: 'Configurações', end: false },
 ];
 
 export function Sidebar() {
@@ -31,13 +29,6 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
-
-      <div className={styles.footer}>
-        <div className={styles.apiStatus}>
-          <span className={styles.statusDot} />
-          <span>API conectada</span>
-        </div>
-      </div>
     </aside>
   );
 }

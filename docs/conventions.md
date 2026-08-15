@@ -34,7 +34,7 @@ self.update_state(state='PROGRESS', meta={...})
 ```
 
 ### Store Strings
-Always lowercase. Valid values: `"amazon"`, `"mercadolivre"`, `"aliexpress"`.
+Always lowercase. Valid values: `"amazon"`, `"mercadolivre"`.
 Never use display names (e.g., `"Amazon BR"`) in code — only in UI.
 
 ### Garbage Name Detection
@@ -126,7 +126,7 @@ docs/<description>     → documentation only
 
 ### Commit Messages
 ```
-feat: add AliExpress search scraper
+feat: add Mercado Livre search scraper
 fix: handle null price in ProductCard
 refactor: extract price formatting to @mv/utils
 ```

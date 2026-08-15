@@ -32,11 +32,13 @@ export interface SearchResultsResponse {
   search_id: string;
   total: number;
   results: SearchResult[];
+  // Lojas que bloquearam essa busca, ex: { mercadolivre: 'login_wall' }
+  store_warnings?: Record<string, string>;
 }
 
 // ─── Domain Models ────────────────────────────────────────────────────────────
 
-export type Store = 'amazon' | 'mercadolivre' | 'aliexpress' | string;
+export type Store = 'amazon' | 'mercadolivre' | string;
 
 export type ProductStatus = 'active' | 'paused';
 

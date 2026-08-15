@@ -12,6 +12,18 @@ import type { SearchResult } from '@mv/types';
 import { formatCurrency, formatStore } from '@mv/utils';
 import styles from './SearchByName.module.css';
 
+const BLOCK_CATEGORY_LABELS: Record<string, string> = {
+  login_wall: 'temporariamente exigindo login para acessar a busca',
+  captcha: 'temporariamente exigindo verificação anti-robô (captcha)',
+  rate_limited: 'limitando as requisições no momento',
+  challenge_js: 'com uma verificação de segurança ativa',
+  access_denied: 'recusando o acesso no momento',
+};
+
+function describeStoreBlock(category: string): string {
+  return BLOCK_CATEGORY_LABELS[category] ?? 'indisponível no momento';
+}
+
 const optionalPrice = z.preprocess(
   (v) => (v === '' || v === undefined ? undefined : Number(v)),
   z.number().nonnegative('Não pode ser negativo').optional(),
@@ -192,6 +204,14 @@ export function SearchByName() {
           <span>Buscando em Amazon e Mercado Livre... Pode levar até 30s.</span>
         </div>
       )}
+
+      {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => (
+        <div key={store} className={styles.warning}>
+          <span>
+            {formatStore(store)} está {describeStoreBlock(category)} — mostrando resultados de outras lojas.
+          </span>
+        </div>
+      ))}
 
       {showEmpty && (
         <p className={styles.empty}>Nenhum resultado encontrado. Tente um termo diferente.</p>

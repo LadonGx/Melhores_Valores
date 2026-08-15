@@ -165,6 +165,25 @@ describe('SearchByName', () => {
     expect(screen.queryByText(/Buscando em Amazon e Mercado Livre/)).not.toBeInTheDocument();
   });
 
+  it('shows a warning when a store blocked the search, without hiding other stores\' results', async () => {
+    const user = userEvent.setup();
+    vi.mocked(searchService.start).mockResolvedValue(startResponse);
+    vi.mocked(searchService.getResults).mockResolvedValue({
+      search_id: 't1',
+      total: 1,
+      results: [populatedResults.results[0]],
+      store_warnings: { mercadolivre: 'login_wall' },
+    });
+
+    renderWithClient(<SearchByName />);
+    await submitQuery(user);
+
+    expect(await screen.findByText('iPhone 15 128GB Azul')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Mercado Livre está temporariamente exigindo login.*outras lojas/),
+    ).toBeInTheDocument();
+  });
+
   it('shows the empty state once the safety timeout elapses without results', async () => {
     vi.useFakeTimers();
     vi.mocked(searchService.start).mockResolvedValue(startResponse);

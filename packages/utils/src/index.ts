@@ -23,7 +23,6 @@ export function formatStore(store: string): string {
   const map: Record<string, string> = {
     amazon: 'Amazon',
     mercadolivre: 'Mercado Livre',
-    aliexpress: 'AliExpress',
     shopee: 'Shopee',
     magalu: 'Magazine Luiza',
   };

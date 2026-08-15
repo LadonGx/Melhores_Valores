@@ -41,9 +41,7 @@ Page
 |---|---|---|
 | `/` | Dashboard | Overview stats |
 | `/products` | Products | Main monitoring table |
-| `/history` | History | Price history charts |
 | `/search` | Search | Search by product name |
-| `/settings` | Settings | App configuration |
 
 All routes wrapped in `DashboardLayout` (sidebar + header).
 

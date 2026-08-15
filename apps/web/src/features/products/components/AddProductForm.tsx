@@ -39,7 +39,7 @@ export function AddProductForm({ onSuccess }: AddProductFormProps) {
       <Input
         label="URL do Produto"
         placeholder="https://www.amazon.com.br/dp/..."
-        hint="Suporta Amazon, Mercado Livre e AliExpress."
+        hint="Suporta Amazon e Mercado Livre."
         error={errors.url?.message}
         {...register('url')}
       />

@@ -7,7 +7,7 @@
 
 ## System Overview
 
-**Melhores Valores** is a Brazilian e-commerce price tracker. It monitors product prices via web scraping (Amazon BR, Mercado Livre, AliExpress) and exposes a REST API + React dashboard.
+**Melhores Valores** is a Brazilian e-commerce price tracker. It monitors product prices via web scraping (Amazon BR, Mercado Livre) and exposes a REST API + React dashboard.
 
 **Core loop:** User submits URL → scraper runs cascade → price saved → dashboard updates.
 
@@ -76,7 +76,7 @@ apps/web/src/
 3. **Cache-first strategy.** Always check Redis before scraping. Never bypass the cache.
 4. **Firecrawl is last resort** (paid API). Only called when httpx + Playwright both fail.
 5. **Adapter isolation.** Each store adapter is independent — changes in one never touch another.
-6. **JS-required stores skip Level 1.** `mercadolivre` and `aliexpress` skip httpx and go straight to Playwright.
+6. **JS-required stores skip Level 1.** `mercadolivre` skips httpx and goes straight to Playwright.
 7. **Garbage name detection** is in `db_client.py`. Never duplicate this logic elsewhere.
 8. **Frontend types** live exclusively in `packages/types/src/index.ts`. No inline type duplication.
 
@@ -89,7 +89,7 @@ apps/web/src/
 - All DB calls go through functions in `db_client.py`
 - Scraping functions return `dict | None`
 - Adapters receive raw HTML string, return `{"name": str, "price": float | None, "image_url": str | None}`
-- Store names are lowercase strings: `"amazon"`, `"mercadolivre"`, `"aliexpress"`
+- Store names are lowercase strings: `"amazon"`, `"mercadolivre"`
 - Logging via standard `logging` module; tasks use Celery logger
 - No print statements in production code
 

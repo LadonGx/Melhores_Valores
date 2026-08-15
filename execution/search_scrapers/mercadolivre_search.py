@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 
 from ..adapters.mercadolivre import detect_block_category
 from ..scrapers.playwright_scraper import fetch_html_playwright
+from .errors import StoreBlockedError
 
 # Página de listagem/busca do ML — nunca tem os seletores de página de produto
 # que fetch_html_playwright espera por padrão, então usamos os nossos próprios.
@@ -98,7 +99,7 @@ def search_mercadolivre(query: str, max_results: int = 10) -> list[dict]:
                 "mercadolivre_search | bloqueado (%s) | query='%s'",
                 block_category, query,
             )
-            return []
+            raise StoreBlockedError(block_category)
 
     for item in items[:max_results]:
         try:

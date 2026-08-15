@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import aliexpress, amazon, mercadolivre
+from . import amazon, mercadolivre
 
-SUPPORTED_STORES = ("amazon", "mercadolivre", "aliexpress")
+SUPPORTED_STORES = ("amazon", "mercadolivre")
 
 
 def normalize_store(store: str) -> str:
@@ -20,7 +20,6 @@ def _get_adapter_module(store: str):
     adapters = {
         "amazon": amazon,
         "mercadolivre": mercadolivre,
-        "aliexpress": aliexpress,
     }
     return adapters[normalized_store]
 

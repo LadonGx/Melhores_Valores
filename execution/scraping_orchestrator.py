@@ -4,18 +4,17 @@ from .scrapers.base_scraper import fetch_html_simple
 from .scrapers.playwright_scraper import fetch_html_playwright
 from .firecrawl_api import scrape_product_data
 from .store_detection import detect_store_from_url as detect_store
-from .adapters import amazon, mercadolivre, aliexpress
+from .adapters import amazon, mercadolivre
 
 logger = logging.getLogger(__name__)
 
 ADAPTERS = {
     "amazon": amazon.extract_from_html,
     "mercadolivre": mercadolivre.extract_from_html,
-    "aliexpress": aliexpress.extract_from_html,
 }
 
 # Stores that render prices via JavaScript — skip Level 1 (httpx)
-JS_REQUIRED_STORES = {"mercadolivre", "aliexpress"}
+JS_REQUIRED_STORES = {"mercadolivre"}
 
 # Minimum confidence to accept a result and stop the cascade.
 # Below this threshold the result is treated as uncertain and the next level is tried.

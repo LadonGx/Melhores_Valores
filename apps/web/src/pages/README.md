@@ -9,9 +9,7 @@ Top-level components that map 1:1 to application routes. Pages compose features 
 |---|---|---|
 | `Dashboard/` | `/` | Overview stats and quick actions |
 | `Products/` | `/products` | Monitored products table (main page) |
-| `History/` | `/history` | Price history charts |
 | `Search/` | `/search` | Product search by name |
-| `Settings/` | `/settings` | Application settings |
 
 ## Rules
 

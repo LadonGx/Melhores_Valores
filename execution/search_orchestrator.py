@@ -4,7 +4,9 @@ import uuid
 
 from .search_scrapers.amazon_search       import search_amazon
 from .search_scrapers.mercadolivre_search import search_mercadolivre
+from .search_scrapers.errors              import StoreBlockedError
 from .db_client                           import save_search_results
+from .search_status                       import set_search_warnings
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +176,7 @@ def run_product_search(
         search_id = str(uuid.uuid4())
 
     all_results: list[dict] = []
+    blocked_stores: dict[str, str] = {}
 
     for search_fn in SEARCH_FUNCTIONS:
         store_name = search_fn.__module__.split(".")[-1]
@@ -184,8 +187,17 @@ def run_product_search(
                 store_name, len(results), query,
             )
             all_results.extend(results)
+        except StoreBlockedError as e:
+            blocked_stores[store_name.removesuffix("_search")] = e.category
+            logger.warning(
+                "Busca | store=%s bloqueado (%s) | query='%s'",
+                store_name, e.category, query,
+            )
         except Exception:
             logger.exception("Busca | store=%s falhou | query='%s'", store_name, query)
+
+    if blocked_stores:
+        set_search_warnings(search_id, blocked_stores)
 
     relevant_results = _filter_and_sort(query, all_results, min_price, max_price)
 
