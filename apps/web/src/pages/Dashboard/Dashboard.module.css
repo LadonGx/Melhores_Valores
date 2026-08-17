@@ -99,6 +99,8 @@
 }
 
 .productRow {
+  margin: 0 -5px;
+  padding: 0 5px;
   border-bottom: 1px solid var(--color-border);
   transition: background 0.12s;
 }
@@ -131,7 +133,7 @@
 .productRowMain {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 15px;
   padding: 12px 0;
   user-select: none;
 }
