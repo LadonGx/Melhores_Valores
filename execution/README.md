@@ -98,8 +98,11 @@ search_orchestrator.py
 | `get_or_create_product(url, store, name?, imageUrl?)` | Upsert product |
 | `get_product_by_id(id)` | Fetch single product |
 | `update_product_name(id, name)` | Manual name override |
-| `add_price_history(product_id, price, inStock)` | Log price entry |
-| `get_product_with_history(id)` | Product + all history |
+| `add_price_history(product_id, price, inStock)` | Log price entry (deduped: skips insert if price/inStock unchanged since last entry on the same BRT calendar day) |
+| `get_price_stats(id)` | current/lowest/average/median price, aggregated in DB |
+| `get_latest_price_entry(id)` | Most recent history row for a product |
+| `get_price_history_chart(id, days)` | History points within a day window (for charting) |
+| `get_price_history_page(id, page, limit)` | Paginated raw history (most recent first) |
 | `get_all_products()` | All products with latest price |
 | `delete_product(id)` | Cascade delete |
 | `save_search_results(search_id, query, results)` | Persist search |

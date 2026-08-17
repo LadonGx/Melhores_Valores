@@ -1,13 +1,15 @@
 import asyncio
+from typing import Literal
 from urllib.parse import urlparse, urlunparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .db_client import (
     add_price_history, delete_product, get_all_products, get_or_create_product,
-    get_product_by_id, get_product_with_history, get_products_with_history,
+    get_latest_price_entry, get_price_history_chart, get_price_history_page, get_price_stats,
+    get_product_by_id, get_products_with_history,
     get_search_results, update_product_name, update_product_status,
 )
 from .search_status import get_search_warnings
@@ -261,37 +263,62 @@ async def update_product_status_endpoint(product_id: str, payload: UpdateStatusR
     return {"status": "ok", "id": product_id, "product_status": payload.status}
 
 
+_HISTORY_RANGE_DAYS: dict[str, int | None] = {"7d": 7, "30d": 30, "90d": 90, "all": None}
+
+
 @app.get("/product/{product_id}/history")
-async def get_product_history(product_id: str):
-    product_data = get_product_with_history(product_id)
-    if not product_data:
+async def get_product_history(
+    product_id: str,
+    range: Literal["7d", "30d", "90d", "all"] = "30d",
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+):
+    product = get_product_by_id(product_id)
+    if not product:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
 
-    history = product_data.get("history", [])
-    prices = [item.get("price") for item in history if isinstance(item.get("price"), (int, float))]
-
-    current_price = prices[0] if prices else None
-    lowest_price = min(prices) if prices else None
-    average_price = round(sum(prices) / len(prices), 2) if prices else None
-
-    latest_entry = history[0] if history else None
+    stats = get_price_stats(product_id)
+    latest_entry = get_latest_price_entry(product_id)
+    chart_points = get_price_history_chart(product_id, _HISTORY_RANGE_DAYS[range])
+    table_entries, total = get_price_history_page(product_id, page, limit)
+    total_pages = (total + limit - 1) // limit if total else 0
 
     return {
         "product": {
-            "id": product_data.get("id"),
-            "url": product_data.get("url"),
-            "name": product_data.get("name"),
-            "store": product_data.get("store"),
-            "image_url": product_data.get("imageUrl"),
-            "status": product_data.get("status"),
-            "in_stock": latest_entry.get("inStock") if latest_entry else None,
-            "created_at": product_data.get("createdAt"),
-            "updated_at": product_data.get("updatedAt"),
+            "id": product.id,
+            "url": product.url,
+            "name": product.name,
+            "store": product.store,
+            "image_url": product.imageUrl,
+            "status": product.status,
+            "in_stock": latest_entry.inStock if latest_entry else None,
+            "created_at": product.createdAt,
+            "updated_at": product.updatedAt,
         },
-        "current_price": current_price,
-        "lowest_price": lowest_price,
-        "average_price": average_price,
-        "history": history,
+        "stats": stats,
+        "chart": {
+            "range": range,
+            "points": [
+                {"scrapedAt": p.scrapedAt, "price": p.price, "inStock": p.inStock}
+                for p in chart_points
+            ],
+        },
+        "table": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "totalPages": total_pages,
+            "entries": [
+                {
+                    "id": e.id,
+                    "price": e.price,
+                    "inStock": e.inStock,
+                    "scrapedAt": e.scrapedAt,
+                    "productId": e.productId,
+                }
+                for e in table_entries
+            ],
+        },
     }
 
 

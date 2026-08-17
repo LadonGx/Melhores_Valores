@@ -28,6 +28,8 @@ model PriceHistory {
   scrapedAt DateTime @default(now())
   productId String
   product   Product  @relation(fields: [productId], references: [id])
+
+  @@index([productId, scrapedAt])
 }
 
 model SearchResult {

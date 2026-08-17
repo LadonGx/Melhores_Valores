@@ -1,10 +1,11 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ProductStatus } from '@mv/types';
+import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { HistoryRange, ProductStatus } from '@mv/types';
 import { productsService } from '@/services/products';
 
 export const productKeys = {
   all: ['products'] as const,
-  history: (id: string) => ['product', id, 'history'] as const,
+  historySummary: (id: string, range: HistoryRange) => ['product', id, 'history', 'summary', range] as const,
+  historyTable: (id: string, limit: number) => ['product', id, 'history', 'table', limit] as const,
   promotions: ['products', 'promotions'] as const,
 };
 
@@ -22,21 +23,31 @@ export function usePromotions() {
   });
 }
 
-export function useProductHistory(productId: string) {
+export function useProductHistorySummary(productId: string, range: HistoryRange = '30d') {
   return useQuery({
-    queryKey: productKeys.history(productId),
-    queryFn: () => productsService.getHistory(productId),
+    queryKey: productKeys.historySummary(productId, range),
+    queryFn: () => productsService.getHistorySummary(productId, range),
     enabled: !!productId,
   });
 }
 
-export function useGroupHistory(productIds: string[]) {
+export function useGroupHistorySummary(productIds: string[], range: HistoryRange = '30d') {
   return useQueries({
     queries: productIds.map((id) => ({
-      queryKey: productKeys.history(id),
-      queryFn: () => productsService.getHistory(id),
+      queryKey: productKeys.historySummary(id, range),
+      queryFn: () => productsService.getHistorySummary(id, range),
       enabled: !!id,
     })),
+  });
+}
+
+export function useProductHistoryTable(productId: string, limit = 20) {
+  return useInfiniteQuery({
+    queryKey: productKeys.historyTable(productId, limit),
+    queryFn: ({ pageParam }) => productsService.getHistoryTable(productId, pageParam, limit),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => (lastPage.page < lastPage.totalPages ? lastPage.page + 1 : undefined),
+    enabled: !!productId,
   });
 }
 

@@ -65,12 +65,39 @@ export interface PriceHistoryEntry {
   productId: string;
 }
 
-export interface ProductWithHistory {
-  product: Product;
+export interface PriceStats {
   current_price: number | null;
   lowest_price: number | null;
   average_price: number | null;
-  history: PriceHistoryEntry[];
+  median_price: number | null;
+}
+
+export interface PriceChartPoint {
+  scrapedAt: string;
+  price: number | null;
+  inStock: boolean;
+}
+
+export type HistoryRange = '7d' | '30d' | '90d' | 'all';
+
+export interface PriceHistoryChart {
+  range: HistoryRange;
+  points: PriceChartPoint[];
+}
+
+export interface PriceHistoryPage {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  entries: PriceHistoryEntry[];
+}
+
+export interface ProductWithHistory {
+  product: Product;
+  stats: PriceStats;
+  chart: PriceHistoryChart;
+  table: PriceHistoryPage;
 }
 
 export interface ProductPromotion {

@@ -2,53 +2,113 @@ import { useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
-import { useGroupHistory, useProductHistory } from '@/features/products/hooks/useProducts';
+import {
+  useGroupHistorySummary,
+  useProductHistorySummary,
+  useProductHistoryTable,
+} from '@/features/products/hooks/useProducts';
+import { PriceHistoryChart } from './PriceHistoryChart';
 import { StockWarningBanner } from './StockWarningBanner';
-import type { PriceHistoryEntry, Product, ProductGroup } from '@mv/types';
+import type { HistoryRange, Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
 import styles from './ProductDetailModal.module.css';
 
-// ─── History table (shared) ───────────────────────────────────────────────────
+function fmtPrice(value: number | null | undefined, loading?: boolean): string {
+  if (loading) return '…';
+  return value != null ? formatCurrency(value) : '—';
+}
 
-function HistoryContent({ productId }: { productId: string }) {
-  const { data, isLoading } = useProductHistory(productId);
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+// ─── Stat cards row (shared) ───────────────────────────────────────────────────
+
+interface StatCardItem {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  sub?: string;
+}
+
+function StatCardsRow({ items }: { items: StatCardItem[] }) {
+  return (
+    <div className={styles.statsRow}>
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className={[styles.statCard, item.highlight ? styles.highlight : ''].join(' ')}
+        >
+          <span className={styles.statLabel}>{item.label}</span>
+          <span className={styles.statValue}>{item.value}</span>
+          {item.sub && <span className={styles.statSub}>{item.sub}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── History table (shared, paginated) ─────────────────────────────────────────
+
+function HistoryTable({ productId }: { productId: string }) {
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useProductHistoryTable(productId);
+  const entries = data?.pages.flatMap((page) => page.entries) ?? [];
 
   if (isLoading) return <p className={styles.loading}>Carregando histórico...</p>;
-  if (!data || data.history.length === 0)
+  if (entries.length === 0)
     return <p className={styles.empty}>Nenhum histórico registrado.</p>;
 
   return (
-    <table className={styles.table}>
-      <thead>
-        <tr>
-          <th>Data da verificação</th>
-          <th>Preço</th>
-          <th>Em estoque</th>
-        </tr>
-      </thead>
-      <tbody>
-        {(data.history as PriceHistoryEntry[]).map((entry) => (
-          <tr key={entry.id}>
-            <td className={styles.date}>{formatDate(entry.scrapedAt)}</td>
-            <td className={styles.price}>
-              {entry.price != null ? formatCurrency(entry.price) : '—'}
-            </td>
-            <td>
-              <span className={entry.inStock ? styles.inStock : styles.outOfStock}>
-                {entry.inStock ? 'Sim' : 'Não'}
-              </span>
-            </td>
+    <>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th>Data da verificação</th>
+            <th>Preço</th>
+            <th>Em estoque</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {entries.map((entry) => (
+            <tr key={entry.id}>
+              <td className={styles.date}>{formatDate(entry.scrapedAt)}</td>
+              <td className={styles.price}>
+                {entry.price != null ? formatCurrency(entry.price) : '—'}
+              </td>
+              <td>
+                <span className={entry.inStock ? styles.inStock : styles.outOfStock}>
+                  {entry.inStock ? 'Sim' : 'Não'}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {hasNextPage && (
+        <div className={styles.loadMoreRow}>
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={isFetchingNextPage}
+            onClick={() => fetchNextPage()}
+          >
+            Carregar mais
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 
 // ─── Single product modal content ─────────────────────────────────────────────
 
 function SingleProductContent({ product }: { product: Product }) {
-  const { data, isLoading } = useProductHistory(product.id);
+  const [range, setRange] = useState<HistoryRange>('30d');
+  const { data, isLoading } = useProductHistorySummary(product.id, range);
 
   return (
     <div className={styles.body}>
@@ -62,30 +122,32 @@ function SingleProductContent({ product }: { product: Product }) {
           Ver anúncio →
         </a>
       </div>
-      <div className={styles.statsRow}>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Preço atual</span>
-          <span className={styles.statValue}>
-            {isLoading ? '…' : data?.current_price != null ? formatCurrency(data.current_price) : '—'}
-          </span>
-        </div>
-        <div className={`${styles.statCard} ${styles.highlight}`}>
-          <span className={styles.statLabel}>Menor preço histórico</span>
-          <span className={styles.statValue}>
-            {isLoading ? '…' : data?.lowest_price != null ? formatCurrency(data.lowest_price) : '—'}
-          </span>
-        </div>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Preço médio</span>
-          <span className={styles.statValue}>
-            {isLoading ? '…' : data?.average_price != null ? formatCurrency(data.average_price) : '—'}
-          </span>
-        </div>
+      <StatCardsRow
+        items={[
+          { label: 'Preço atual', value: fmtPrice(data?.stats.current_price, isLoading) },
+          {
+            label: 'Menor preço histórico',
+            value: fmtPrice(data?.stats.lowest_price, isLoading),
+            highlight: true,
+          },
+          { label: 'Preço médio', value: fmtPrice(data?.stats.average_price, isLoading) },
+          { label: 'Mediana', value: fmtPrice(data?.stats.median_price, isLoading) },
+        ]}
+      />
+
+      <div className={styles.section}>
+        <span className={styles.sectionTitle}>Tendência de preço</span>
+        <PriceHistoryChart
+          points={data?.chart.points ?? []}
+          range={range}
+          onRangeChange={setRange}
+          loading={isLoading}
+        />
       </div>
 
       <div className={styles.section}>
-        <span className={styles.sectionTitle}>Histórico de preços</span>
-        <HistoryContent productId={product.id} />
+        <span className={styles.sectionTitle}>Registros</span>
+        <HistoryTable productId={product.id} />
       </div>
     </div>
   );
@@ -103,7 +165,8 @@ function ListingAccordion({
   onUngroup: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { data: histData } = useProductHistory(product.id);
+  const [range, setRange] = useState<HistoryRange>('30d');
+  const { data: histData } = useProductHistorySummary(product.id, range);
 
   return (
     <div className={styles.accordionItem}>
@@ -135,9 +198,9 @@ function ListingAccordion({
         >
           {product.current_price != null ? formatCurrency(product.current_price) : '—'}
         </span>
-        {histData?.lowest_price != null && (
+        {histData?.stats.lowest_price != null && (
           <span className={styles.accordionLowest}>
-            mín: {formatCurrency(histData.lowest_price)}
+            mín: {formatCurrency(histData.stats.lowest_price)}
           </span>
         )}
         <span
@@ -162,7 +225,12 @@ function ListingAccordion({
               Ver anúncio →
             </a>
           </div>
-          <HistoryContent productId={product.id} />
+          <PriceHistoryChart
+            points={histData?.chart.points ?? []}
+            range={range}
+            onRangeChange={setRange}
+          />
+          <HistoryTable productId={product.id} />
           <div className={styles.ungroupBtn}>
             <Button variant="ghost" size="sm" onClick={onUngroup}>
               Remover do grupo
@@ -200,50 +268,36 @@ function GroupContent({
 
   const cheapest = sorted.find((p) => p.current_price != null);
 
-  const historyQueries = useGroupHistory(groupProducts.map((p) => p.id));
+  const historyQueries = useGroupHistorySummary(groupProducts.map((p) => p.id));
 
   const historyLoading = historyQueries.some((q) => q.isLoading);
-  const allPrices = historyQueries
-    .flatMap((q) => q.data?.history ?? [])
-    .map((h) => h.price)
+  const perListingLowest = historyQueries
+    .map((q) => q.data?.stats.lowest_price)
+    .filter((p): p is number => p != null);
+  const perListingMedian = historyQueries
+    .map((q) => q.data?.stats.median_price)
     .filter((p): p is number => p != null);
 
-  const lowestHistorical = allPrices.length > 0 ? Math.min(...allPrices) : null;
-  const medianPrice = (() => {
-    if (allPrices.length === 0) return null;
-    const s = [...allPrices].sort((a, b) => a - b);
-    const mid = Math.floor(s.length / 2);
-    return s.length % 2 !== 0 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-  })();
+  const lowestHistorical = perListingLowest.length > 0 ? Math.min(...perListingLowest) : null;
+  const medianPrice = median(perListingMedian);
 
   return (
     <div className={styles.body}>
       {/* Stat cards */}
-      <div className={styles.statsRow}>
-        <div className={`${styles.statCard} ${styles.highlight}`}>
-          <span className={styles.statLabel}>Menor preço hoje</span>
-          <span className={styles.statValue}>
-            {cheapest?.current_price != null ? formatCurrency(cheapest.current_price) : '—'}
-          </span>
-          {cheapest && (
-            <span className={styles.statSub}>{formatStore(cheapest.store)}</span>
-          )}
-        </div>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Menor preço histórico</span>
-          <span className={styles.statValue}>
-            {historyLoading ? '…' : lowestHistorical != null ? formatCurrency(lowestHistorical) : '—'}
-          </span>
-        </div>
-        <div className={styles.statCard}>
-          <span className={styles.statLabel}>Mediana de preços</span>
-          <span className={styles.statValue}>
-            {historyLoading ? '…' : medianPrice != null ? formatCurrency(medianPrice) : '—'}
-          </span>
-        </div>
-      </div>
+      <StatCardsRow
+        items={[
+          {
+            label: 'Menor preço hoje',
+            value: cheapest?.current_price != null ? formatCurrency(cheapest.current_price) : '—',
+            highlight: true,
+            sub: cheapest ? formatStore(cheapest.store) : undefined,
+          },
+          { label: 'Menor preço histórico', value: fmtPrice(lowestHistorical, historyLoading) },
+          { label: 'Mediana de preços', value: fmtPrice(medianPrice, historyLoading) },
+        ]}
+      />
 
-      {/* Per-listing accordion — each ListingAccordion calls useProductHistory internally */}
+      {/* Per-listing accordion — each ListingAccordion calls useProductHistorySummary internally */}
       <div className={styles.section}>
         <span className={styles.sectionTitle}>Anúncios e histórico</span>
         <div className={styles.accordion}>

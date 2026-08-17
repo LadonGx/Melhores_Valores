@@ -29,7 +29,8 @@ import api from '@/services/api'
 | `getAll()` | GET | `/products` | All monitored products |
 | `add(req)` | POST | `/monitor/add` | Queue URL for monitoring |
 | `remove(id)` | DELETE | `/product/{id}` | Remove product |
-| `getHistory(id)` | GET | `/product/{id}/history` | Price history |
+| `getHistorySummary(id, range)` | GET | `/product/{id}/history?range=` | Stats + chart series |
+| `getHistoryTable(id, page, limit)` | GET | `/product/{id}/history?page=&limit=` | Paginated raw history |
 | `rescrape(url)` | POST | `/monitor/add` | Re-queue existing URL |
 | `refreshPrice(id)` | POST | `/product/{id}/refresh` | Sync refresh (60s timeout) |
 | `updateName(id, name)` | PATCH | `/product/{id}/name` | Rename product |

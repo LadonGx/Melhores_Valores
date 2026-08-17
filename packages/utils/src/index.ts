@@ -11,12 +11,21 @@ const DATE_FORMATTER = new Intl.DateTimeFormat('pt-BR', {
   minute: '2-digit',
 });
 
+const SHORT_DATE_FORMATTER = new Intl.DateTimeFormat('pt-BR', {
+  day: '2-digit',
+  month: '2-digit',
+});
+
 export function formatCurrency(value: number): string {
   return BRL_FORMATTER.format(value);
 }
 
 export function formatDate(iso: string): string {
   return DATE_FORMATTER.format(new Date(iso));
+}
+
+export function formatShortDate(iso: string): string {
+  return SHORT_DATE_FORMATTER.format(new Date(iso));
 }
 
 export function formatStore(store: string): string {

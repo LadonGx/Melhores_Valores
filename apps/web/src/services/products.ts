@@ -1,5 +1,7 @@
 import type {
   AddProductResponse,
+  HistoryRange,
+  PriceHistoryPage,
   Product,
   ProductStatus,
   ProductWithHistory,
@@ -34,9 +36,25 @@ export const productsService = {
     await api.delete(`/product/${productId}`);
   },
 
-  getHistory: async (productId: string): Promise<ProductWithHistory> => {
-    const { data } = await api.get<ProductWithHistory>(`/product/${productId}/history`);
+  getHistorySummary: async (
+    productId: string,
+    range: HistoryRange = '30d',
+  ): Promise<ProductWithHistory> => {
+    const { data } = await api.get<ProductWithHistory>(`/product/${productId}/history`, {
+      params: { range },
+    });
     return data;
+  },
+
+  getHistoryTable: async (
+    productId: string,
+    page: number,
+    limit = 20,
+  ): Promise<PriceHistoryPage> => {
+    const { data } = await api.get<ProductWithHistory>(`/product/${productId}/history`, {
+      params: { page, limit },
+    });
+    return data.table;
   },
 
   rescrape: async (url: string): Promise<AddProductResponse> => {
