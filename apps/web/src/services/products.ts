@@ -1,5 +1,6 @@
 import type {
   AddProductResponse,
+  GroupPriceStats,
   HistoryRange,
   PriceHistoryPage,
   Product,
@@ -55,6 +56,13 @@ export const productsService = {
       params: { page, limit },
     });
     return data.table;
+  },
+
+  getGroupStats: async (productIds: string[]): Promise<GroupPriceStats> => {
+    const { data } = await api.get<GroupPriceStats>('/products/group-stats', {
+      params: { ids: productIds.join(',') },
+    });
+    return data;
   },
 
   rescrape: async (url: string): Promise<AddProductResponse> => {

@@ -8,7 +8,8 @@ from pydantic import BaseModel
 
 from .db_client import (
     add_price_history, delete_product, get_all_products, get_or_create_product,
-    get_latest_price_entry, get_price_history_chart, get_price_history_page, get_price_stats,
+    get_group_price_stats, get_latest_price_entry, get_price_history_chart,
+    get_price_history_page, get_price_stats,
     get_product_by_id, get_products_with_history,
     get_search_results, update_product_name, update_product_status,
 )
@@ -122,6 +123,20 @@ async def list_promotions():
     products = get_products_with_history()
     promotions = _compute_promotions(products)
     return {"total": len(promotions), "promotions": promotions}
+
+
+@app.get("/products/group-stats")
+async def get_group_stats(ids: str):
+    """
+    Retorna menor preço e mediana reais (pooled) sobre o histórico de várias
+    listagens de uma vez — usado pelo card de estatísticas do modal de grupo.
+
+    Parâmetro: ids = lista de product_id separados por vírgula (?ids=id1,id2,id3).
+    """
+    product_ids = [i for i in ids.split(",") if i]
+    if not product_ids:
+        raise HTTPException(status_code=400, detail="Parâmetro 'ids' é obrigatório.")
+    return get_group_price_stats(product_ids)
 
 
 @app.delete("/product/{product_id}")

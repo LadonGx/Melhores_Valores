@@ -100,6 +100,7 @@ search_orchestrator.py
 | `update_product_name(id, name)` | Manual name override |
 | `add_price_history(product_id, price, inStock)` | Log price entry (deduped: skips insert if price/inStock unchanged since last entry on the same BRT calendar day) |
 | `get_price_stats(id)` | current/lowest/average/median price, aggregated in DB |
+| `get_group_price_stats(ids)` | Real pooled lowest/median across multiple products' history |
 | `get_latest_price_entry(id)` | Most recent history row for a product |
 | `get_price_history_chart(id, days)` | History points within a day window (for charting) |
 | `get_price_history_page(id, page, limit)` | Paginated raw history (most recent first) |

@@ -3,7 +3,7 @@ import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
 import {
-  useGroupHistorySummary,
+  useGroupPriceStats,
   useProductHistorySummary,
   useProductHistoryTable,
 } from '@/features/products/hooks/useProducts';
@@ -16,13 +16,6 @@ import styles from './ProductDetailModal.module.css';
 function fmtPrice(value: number | null | undefined, loading?: boolean): string {
   if (loading) return '…';
   return value != null ? formatCurrency(value) : '—';
-}
-
-function median(values: number[]): number | null {
-  if (values.length === 0) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 // ─── Stat cards row (shared) ───────────────────────────────────────────────────
@@ -268,18 +261,11 @@ function GroupContent({
 
   const cheapest = sorted.find((p) => p.current_price != null);
 
-  const historyQueries = useGroupHistorySummary(groupProducts.map((p) => p.id));
-
-  const historyLoading = historyQueries.some((q) => q.isLoading);
-  const perListingLowest = historyQueries
-    .map((q) => q.data?.stats.lowest_price)
-    .filter((p): p is number => p != null);
-  const perListingMedian = historyQueries
-    .map((q) => q.data?.stats.median_price)
-    .filter((p): p is number => p != null);
-
-  const lowestHistorical = perListingLowest.length > 0 ? Math.min(...perListingLowest) : null;
-  const medianPrice = median(perListingMedian);
+  const { data: groupStats, isLoading: historyLoading } = useGroupPriceStats(
+    groupProducts.map((p) => p.id),
+  );
+  const lowestHistorical = groupStats?.lowest_price ?? null;
+  const medianPrice = groupStats?.median_price ?? null;
 
   return (
     <div className={styles.body}>

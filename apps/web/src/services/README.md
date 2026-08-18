@@ -31,6 +31,7 @@ import api from '@/services/api'
 | `remove(id)` | DELETE | `/product/{id}` | Remove product |
 | `getHistorySummary(id, range)` | GET | `/product/{id}/history?range=` | Stats + chart series |
 | `getHistoryTable(id, page, limit)` | GET | `/product/{id}/history?page=&limit=` | Paginated raw history |
+| `getGroupStats(ids)` | GET | `/products/group-stats?ids=` | Real pooled lowest/median across listings |
 | `rescrape(url)` | POST | `/monitor/add` | Re-queue existing URL |
 | `refreshPrice(id)` | POST | `/product/{id}/refresh` | Sync refresh (60s timeout) |
 | `updateName(id, name)` | PATCH | `/product/{id}/name` | Rename product |

@@ -212,6 +212,40 @@ def get_price_stats(product_id: str) -> dict:
         raise
 
 
+def get_group_price_stats(product_ids: list[str]) -> dict:
+    """
+    Calcula estatísticas agregadas (mínimo e mediana reais, sobre os preços
+    pooled de várias listagens) — usado pelo card de grupo no modal, para não
+    depender de combinar estatísticas por listagem no cliente (mediana não é
+    distributiva: mediana das medianas != mediana do conjunto completo).
+
+    Returns:
+        dict: lowest_price, median_price.
+    """
+    connect_db()
+    if not product_ids:
+        return {"lowest_price": None, "median_price": None}
+    try:
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(product_ids)))
+        rows = db.query_raw(
+            f'''SELECT
+                    MIN(price) AS lowest,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS median
+                FROM "PriceHistory"
+                WHERE "productId" IN ({placeholders}) AND price IS NOT NULL''',
+            *product_ids,
+        )
+        row = rows[0] if rows else {}
+
+        return {
+            "lowest_price": float(row["lowest"]) if row.get("lowest") is not None else None,
+            "median_price": round(float(row["median"]), 2) if row.get("median") is not None else None,
+        }
+    except Exception as e:
+        logger.error(f"Erro ao calcular estatísticas de grupo para {product_ids}: {e}")
+        raise
+
+
 def get_latest_price_entry(product_id: str) -> PriceHistory | None:
     """Retorna a linha de histórico mais recente do produto, ou None se não houver nenhuma."""
     connect_db()

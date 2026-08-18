@@ -72,6 +72,11 @@ export interface PriceStats {
   median_price: number | null;
 }
 
+export interface GroupPriceStats {
+  lowest_price: number | null;
+  median_price: number | null;
+}
+
 export interface PriceChartPoint {
   scrapedAt: string;
   price: number | null;

@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { HistoryRange, ProductStatus } from '@mv/types';
 import { productsService } from '@/services/products';
 
@@ -6,6 +6,7 @@ export const productKeys = {
   all: ['products'] as const,
   historySummary: (id: string, range: HistoryRange) => ['product', id, 'history', 'summary', range] as const,
   historyTable: (id: string, limit: number) => ['product', id, 'history', 'table', limit] as const,
+  groupStats: (ids: string[]) => ['products', 'group-stats', [...ids].sort().join(',')] as const,
   promotions: ['products', 'promotions'] as const,
 };
 
@@ -31,13 +32,11 @@ export function useProductHistorySummary(productId: string, range: HistoryRange 
   });
 }
 
-export function useGroupHistorySummary(productIds: string[], range: HistoryRange = '30d') {
-  return useQueries({
-    queries: productIds.map((id) => ({
-      queryKey: productKeys.historySummary(id, range),
-      queryFn: () => productsService.getHistorySummary(id, range),
-      enabled: !!id,
-    })),
+export function useGroupPriceStats(productIds: string[]) {
+  return useQuery({
+    queryKey: productKeys.groupStats(productIds),
+    queryFn: () => productsService.getGroupStats(productIds),
+    enabled: productIds.length > 0,
   });
 }
 
