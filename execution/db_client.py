@@ -1,9 +1,17 @@
 import logging
 import sys
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from prisma import Prisma
 from prisma.models import Product, PriceHistory
+
+_BRT = ZoneInfo("America/Sao_Paulo")
+
+
+def _is_same_brt_day(a: datetime, b: datetime) -> bool:
+    return a.astimezone(_BRT).date() == b.astimezone(_BRT).date()
 
 load_dotenv()
 
@@ -127,9 +135,11 @@ def update_product_status(product_id: str, status: str) -> Product | None:
         return None
 
 
-def add_price_history(product_id: str, price: float | None, in_stock: bool = True) -> PriceHistory:
+def add_price_history(product_id: str, price: float | None, in_stock: bool = True) -> PriceHistory | None:
     """
-    Registra uma nova entrada de preço para um produto específico.
+    Registra uma nova entrada de preço para um produto específico, com deduplicação:
+    só insere se price/inStock mudaram desde o último registro, ou se ainda não existe
+    registro para o dia corrente (calendário de America/Sao_Paulo).
 
     Args:
         product_id (str): ID único (CUID) do produto.
@@ -137,10 +147,21 @@ def add_price_history(product_id: str, price: float | None, in_stock: bool = Tru
         in_stock (bool): Se o produto está disponível para compra.
 
     Returns:
-        PriceHistory: O registro do histórico de preço criado.
+        PriceHistory | None: O registro criado, ou None se a escrita foi deduplicada.
     """
     connect_db()
     try:
+        last = db.pricehistory.find_first(
+            where={"productId": product_id},
+            order={"scrapedAt": "desc"},
+        )
+        if last is not None:
+            changed = (last.price != price) or (last.inStock != in_stock)
+            same_day = _is_same_brt_day(last.scrapedAt, datetime.now(timezone.utc))
+            if not changed and same_day:
+                logger.info(f"Dedup: preço inalterado para {product_id}, ignorando insert.")
+                return None
+
         logger.info(f"Registrando preço {price} para produto_id: {product_id} (Estoque: {in_stock})")
         return db.pricehistory.create(
             data={
@@ -153,36 +174,118 @@ def add_price_history(product_id: str, price: float | None, in_stock: bool = Tru
         logger.error(f"Erro ao inserir histórico de preço para {product_id}: {e}")
         raise
 
-def get_product_with_history(product_id: str) -> dict:
-    """
-    Recupera os detalhes de um produto e toda sua árvore de preços vinculada.
-    Os preços são ordenados de forma decrescente por data (mais recentes primeiro).
 
-    Args:
-        product_id (str): ID do produto para busca.
+def get_price_stats(product_id: str) -> dict:
+    """
+    Calcula estatísticas de preço agregadas no banco (não em Python).
 
     Returns:
-        dict: Dicionário completo do produto incluindo a lista 'history', ou dicionário vazio se não encontrado.
+        dict: current_price, lowest_price, average_price, median_price.
     """
     connect_db()
     try:
-        product = db.product.find_unique(
-            where={"id": product_id},
-            include={
-                "history": {
-                    "order_by": {"scrapedAt": "desc"},
-                }
-            }
+        latest = db.pricehistory.find_first(
+            where={"productId": product_id},
+            order={"scrapedAt": "desc"},
         )
-        
-        if not product:
-            logger.warning(f"Produto não encontrado no banco para o ID: {product_id}")
-            return {}
-            
-        # Converte o modelo Prisma/Pydantic em um dicionário Python para fácil consumo no front-end
-        return product.model_dump()
+        # prisma-client-py (v0.11) não expõe .aggregate() como método de conveniência,
+        # então min/média/mediana são calculados numa única query raw no Postgres.
+        rows = db.query_raw(
+            '''SELECT
+                   MIN(price) AS lowest,
+                   AVG(price) AS average,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS median
+               FROM "PriceHistory"
+               WHERE "productId" = $1 AND price IS NOT NULL''',
+            product_id,
+        )
+        row = rows[0] if rows else {}
+
+        return {
+            "current_price": latest.price if latest else None,
+            "lowest_price": float(row["lowest"]) if row.get("lowest") is not None else None,
+            "average_price": round(float(row["average"]), 2) if row.get("average") is not None else None,
+            "median_price": round(float(row["median"]), 2) if row.get("median") is not None else None,
+        }
     except Exception as e:
-        logger.error(f"Erro ao buscar produto com histórico para {product_id}: {e}")
+        logger.error(f"Erro ao calcular estatísticas de preço para {product_id}: {e}")
+        raise
+
+
+def get_group_price_stats(product_ids: list[str]) -> dict:
+    """
+    Calcula estatísticas agregadas (mínimo e mediana reais, sobre os preços
+    pooled de várias listagens) — usado pelo card de grupo no modal, para não
+    depender de combinar estatísticas por listagem no cliente (mediana não é
+    distributiva: mediana das medianas != mediana do conjunto completo).
+
+    Returns:
+        dict: lowest_price, median_price.
+    """
+    connect_db()
+    if not product_ids:
+        return {"lowest_price": None, "median_price": None}
+    try:
+        placeholders = ", ".join(f"${i + 1}" for i in range(len(product_ids)))
+        rows = db.query_raw(
+            f'''SELECT
+                    MIN(price) AS lowest,
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS median
+                FROM "PriceHistory"
+                WHERE "productId" IN ({placeholders}) AND price IS NOT NULL''',
+            *product_ids,
+        )
+        row = rows[0] if rows else {}
+
+        return {
+            "lowest_price": float(row["lowest"]) if row.get("lowest") is not None else None,
+            "median_price": round(float(row["median"]), 2) if row.get("median") is not None else None,
+        }
+    except Exception as e:
+        logger.error(f"Erro ao calcular estatísticas de grupo para {product_ids}: {e}")
+        raise
+
+
+def get_latest_price_entry(product_id: str) -> PriceHistory | None:
+    """Retorna a linha de histórico mais recente do produto, ou None se não houver nenhuma."""
+    connect_db()
+    try:
+        return db.pricehistory.find_first(
+            where={"productId": product_id},
+            order={"scrapedAt": "desc"},
+        )
+    except Exception as e:
+        logger.error(f"Erro ao buscar entrada de preço mais recente para {product_id}: {e}")
+        raise
+
+
+def get_price_history_chart(product_id: str, days: int | None) -> list[PriceHistory]:
+    """Retorna os pontos de histórico dentro da janela de dias informada (ou tudo, se None), mais antigos primeiro."""
+    connect_db()
+    try:
+        where = {"productId": product_id}
+        if days is not None:
+            where["scrapedAt"] = {"gte": datetime.now(timezone.utc) - timedelta(days=days)}
+        return db.pricehistory.find_many(where=where, order={"scrapedAt": "asc"})
+    except Exception as e:
+        logger.error(f"Erro ao buscar série de histórico para {product_id}: {e}")
+        raise
+
+
+def get_price_history_page(product_id: str, page: int, limit: int) -> tuple[list[PriceHistory], int]:
+    """Retorna uma página do histórico bruto (mais recentes primeiro) e o total de registros."""
+    connect_db()
+    try:
+        total = db.pricehistory.count(where={"productId": product_id})
+        entries = db.pricehistory.find_many(
+            where={"productId": product_id},
+            order={"scrapedAt": "desc"},
+            skip=(page - 1) * limit,
+            take=limit,
+        )
+        return entries, total
+    except Exception as e:
+        logger.error(f"Erro ao buscar página de histórico para {product_id}: {e}")
         raise
 
 

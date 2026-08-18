@@ -33,7 +33,9 @@ features/
 | Hook | Query Key | Description |
 |---|---|---|
 | `useProducts()` | `productKeys.all` | All products, stale: 2min |
-| `useProductHistory(id)` | `productKeys.detail(id)` | Single product history |
+| `useProductHistorySummary(id, range)` | `productKeys.historySummary(id, range)` | Stats + chart series for a product |
+| `useProductHistoryTable(id, limit)` | `productKeys.historyTable(id, limit)` | Paginated raw history (infinite query, "carregar mais") |
+| `useGroupPriceStats(ids)` | `productKeys.groupStats(ids)` | Real pooled lowest/median across a group's listings |
 | `useAddProduct()` | mutation | Add URL, 5s delay before invalidate |
 | `useRemoveProduct()` | mutation | Delete product |
 | `useRescrapeProduct()` | mutation | Re-queue scraping, 8s delay |

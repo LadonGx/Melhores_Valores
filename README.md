@@ -10,6 +10,26 @@ O **Melhores Valores** é composto por um backend em Python (FastAPI + Celery) r
 
 ---
 
+## 📸 Screenshots
+
+**Dashboard** — visão geral dos anúncios monitorados, com preço mais baixo do dia em destaque.
+
+![Dashboard](docs/screenshots/dashboard.jpg)
+
+**Produtos monitorados** — lista completa com URL, preço atual e atualização manual de preço.
+
+![Produtos](docs/screenshots/products.jpg)
+
+**Busca por nome** — busca paralela em Amazon e Mercado Livre, com aviso de bloqueio por loja quando aplicável.
+
+![Busca de produtos](docs/screenshots/search-results.jpg)
+
+**Fluxo de adição** — monitorar um resultado de busca e vê-lo aparecer no Dashboard.
+
+![Fluxo de adicionar produto](docs/screenshots/add-product-flow.gif)
+
+---
+
 ## 🛠️ Stack Tecnológica
 
 **Backend**
