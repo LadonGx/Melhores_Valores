@@ -237,24 +237,36 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 > Este é o marco principal. Daqui em diante é empacotamento.
 
 ---
-### Fase 6: Playwright e Firecrawl opcionais
+### Fase 6: Playwright e Firecrawl opcionais ✅
 
 **Objetivo:** o app funciona em qualquer máquina, mesmo sem Chromium baixado e sem chave do Firecrawl.
 
-- [ ] `playwright_scraper.py`: ordem de tentativa do navegador:
-  1. `channel="msedge"` (vem em todo Windows 10/11) ou `channel="chrome"`, se instalado;
-  2. Chromium baixado em `BROWSERS_DIR` (`PLAYWRIGHT_BROWSERS_PATH`);
-  3. nenhum disponível: retorna `None` com log e a cascata segue (o comportamento atual em caso de falha já é esse).
-  - Descobrir o navegador uma vez e guardar o resultado, para não pagar a falha em toda chamada.
-- [ ] Download do Chromium sob demanda (opcional na v1): rodar o driver embutido do Playwright (`playwright install chromium`) apontando para `BROWSERS_DIR`, disparado por uma ação explícita do usuário, nunca em silêncio.
-- [ ] Firecrawl: já é ignorado sem chave. Documentar `FIRECRAWL_API_KEY` no `config.env` do usuário. **Nunca** embutir chave no build.
-- [ ] Opcional: `GET /api/system/status` informando qual navegador está em uso e se o Firecrawl está configurado, para a UI mostrar isso depois.
-- [ ] **Ferramenta de dev: copiar os dados da versão web para testes** (`scripts/copy_web_data.py`). Lê o Postgres da versão web (subido pelo `docker-compose` da `main`) **só com SELECT**, e grava num SQLite **novo** numa pasta escolhida (ex: `MV_DATA_DIR=.data/copia-web`), nunca na pasta padrão do app nem por cima de um banco existente. Copia `Product`, `PriceHistory` e, opcionalmente, `SearchResult`, mantendo ids e datas (convertidas para o formato ISO UTC do `db_client`). Não entra no executável; serve para você e para as validações terem dados reais.
+- [x] `playwright_scraper.py`: ordem de tentativa do navegador:
+  1. `channel="msedge"` (vem em todo Windows 10/11), depois `channel="chrome"`;
+  2. Chromium do próprio Playwright (em dev, `playwright install chromium`; no executável, procurado em `BROWSERS_DIR`, via `PLAYWRIGHT_BROWSERS_PATH`);
+  3. nenhum disponível: retorna `None`, registra **uma vez** no log e a cascata segue.
+  - A escolha é feita na 1ª chamada (com lock entre threads) e lembrada no processo (`browser_in_use()`). Se o navegador lembrado parar de abrir (ex: desinstalado), a escolha é esquecida e a próxima chamada detecta de novo. Argumentos de lançamento (headless, anti-automação) iguais aos de antes.
+  - Vale também para a busca do Mercado Livre, que usa a mesma `fetch_html_playwright`.
+- [ ] Download do Chromium sob demanda: **não feito** (opcional na v1). No Windows o Edge sempre existe. Em macOS/Linux sem Chrome, o nível 2 fica desligado até essa opção existir; avaliar quando houver testadores fora do Windows.
+- [x] Firecrawl: já era ignorado sem chave. O executável não carrega mais o `.env` do repo (feito antes da F6, com teste), então só funciona com a chave que o próprio usuário puser em `<pasta de dados>/config.env`. **Nunca** embutir chave no build. A documentação para o usuário entra no `README-EXE.md` (F8).
+- [ ] Opcional: `GET /api/system/status` (navegador em uso, Firecrawl configurado): **não feito**. `browser_in_use()` já existe para quando a UI precisar.
+- [x] **Ferramenta de dev: copiar os dados da versão web para testes** (`scripts/copy_web_data.py`):
+  - Lê o Postgres da versão web com `psycopg` numa transação **READ ONLY** (só `SELECT`; qualquer escrita falharia no servidor). A URL padrão vem do `DATABASE_URL` do `.env`, sem os parâmetros que só o Prisma entende.
+  - Grava num SQLite **novo** (padrão `.data/copia-web/`, que está no `.gitignore`). Se o arquivo já existir, aborta antes até de ler o Postgres. A gravação é via `db_client.bulk_import` (nova função; recusa banco que já tenha dados) numa transação única, tudo ou nada.
+  - Preserva ids e datas. Os timestamps do Prisma (sem fuso, em UTC) são marcados como UTC: sem isso, iriam para o SQLite deslocados em -3h.
+  - `--with-search-results` (opcional), `--dry-run` (só conta). `psycopg[binary]` entrou só no `requirements-dev.txt`; não vai para o executável.
+  - **Cópia real ainda não executada:** o container `price_tracker_db` (volume `melhores_valores_postgres_data`) estava parado, e não foi ligado sem a sua confirmação.
+- [x] Testes: escolha do navegador (6 casos: Edge, fallback para Chrome, para Chromium, nenhum, navegador que some), `settings` no modo executável (4), `bulk_import`/`is_empty` (3) e o script de cópia (10: só leitura, destino existente, fuso, dry-run, Postgres fora do ar). Total: 234.
 
-**Pronto quando:** com Edge, sem Chromium do Playwright e sem chave do Firecrawl, um produto que exige JS (nível 2) é capturado.
+**Validação real** (Firecrawl desligado):
+- Página de busca da Amazon pelo nível 2: abriu com o **Microsoft Edge** (detectado na 1ª chamada), 1,7 MB de HTML com resultados em 6 s. Pelo `httpx` (nível 1) essa mesma página devolvia 503.
+- Produto da Amazon extraído pelo nível 2 com o Edge: nome, R$ 66,41, em estoque, confiança 0,92, em 12 s.
+
+> **Achado para depois:** a busca por nome da Amazon (`search_scrapers/amazon_search.py`) usa só `httpx` e vem recebendo 503, enquanto o Edge abre a mesma página. Um fallback para o nível 2 na busca da Amazon (como a do Mercado Livre já faz) provavelmente devolve resultados. É mudança de regra de scraping, que também vale para a versão web, por isso não entrou aqui.
+
+**Pronto quando:** com Edge, sem Chromium do Playwright e sem chave do Firecrawl, um produto que exige JS (nível 2) é capturado. ✅
 
 ---
-
 ### Fase 7: Empacotamento com PyInstaller
 
 **Objetivo:** pasta `dist/MelhoresValores/` com `MelhoresValores.exe` que roda numa máquina limpa.
@@ -350,7 +362,7 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - [x] F3 Cache e status de busca em memória (remoção do pacote `redis` fica para a F4)
 - [x] F4 `task_runner.py` + APScheduler com recuperação na abertura
 - [x] F5 `desktop_app.py` + `main.py`, validado sem Docker
-- [ ] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura)
+- [x] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura; cópia real pendente)
 - [ ] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev, testado na Windows Sandbox
 - [ ] F8 Botão para checar o preço de novo nos itens, workflow multiplataforma + GitHub Release + `README-EXE.md` (novo, o `README.md` atual fica)
 - [ ] F9 Atualizações, bandeja (opcional), configurações

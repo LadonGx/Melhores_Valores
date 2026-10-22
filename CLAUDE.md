@@ -53,7 +53,8 @@ SQLite file created automatically on first access, in the user data dir
 Schema changes: append a new entry to `MIGRATIONS` in `execution/db_schema.py` (versioned by `PRAGMA user_version`).
 
 > Branch `exe` is migrating to a single-process desktop app — see `docs/plano-executavel.md`.
-> Done: SQLite (Phase 2), in-memory cache (Phase 3), threads + APScheduler (Phase 4), single entry point serving the frontend (Phase 5). Still pending: optional Playwright/Firecrawl (6), PyInstaller (7), release + `README-EXE.md` (8).
+> Done: SQLite (2), in-memory cache (3), threads + APScheduler (4), single entry point serving the frontend (5), system Edge/Chrome for Playwright + web-data copy script (6). Pending: native window + PyInstaller (7), re-check button + release + `README-EXE.md` (8).
+> Rules: `main` (web version) is untouched; testers start with an empty DB; the frozen build never loads the repo `.env`; web data may only be **copied** (`scripts/copy_web_data.py`, read-only).
 
 ## Architecture
 

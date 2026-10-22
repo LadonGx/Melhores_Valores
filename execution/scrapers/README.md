@@ -13,7 +13,7 @@ Fetch raw HTML from product pages using different strategies. Each scraper repre
 | File | Level | Strategy | Speed | Cost |
 |---|---|---|---|---|
 | `base_scraper.py` | Level 1 | httpx (plain HTTP) | ~1s | Free |
-| `playwright_scraper.py` | Level 2 | Playwright/Chromium | ~5–8s | Free |
+| `playwright_scraper.py` | Level 2 | Playwright + system Edge/Chrome (fallback: Playwright Chromium) | ~5–12s | Free |
 
 Level 3 (Firecrawl) is NOT in this folder — it lives in `execution/firecrawl_api.py`.
 
@@ -53,5 +53,6 @@ html = playwright_scraper.fetch(url)   # Level 2
 ## Risks
 
 - Playwright increases memory/CPU significantly — do not use it unless needed
-- Playwright Chromium must be installed in Docker image (`playwright install chromium`)
+- Browser order: `msedge` → `chrome` → Playwright's own Chromium. The first one that launches is remembered for the process (`browser_in_use()`); if it stops working the choice is reset. The desktop build does **not** bundle Chromium — Edge ships with Windows 10/11
+- No browser at all: level 2 returns `None` (logged once) and the cascade continues
 - httpx may be blocked by anti-bot measures — this is expected, escalate to Level 2

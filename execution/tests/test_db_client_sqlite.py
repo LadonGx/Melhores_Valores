@@ -317,6 +317,39 @@ class TestMigrations:
             db_client.close_db()
 
 
+class TestBulkImport:
+    def _models(self):
+        from execution.models import PriceHistory, Product
+
+        when = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+        product = Product(id="p1", url="https://a", store="amazon", createdAt=when, updatedAt=when)
+        history = [PriceHistory(id="h1", price=10.0, scrapedAt=when, productId="p1")]
+        return [product], history
+
+    def test_import_into_empty_database(self):
+        assert db_client.is_empty() is True
+        products, history = self._models()
+        assert db_client.bulk_import(products, history) == {"products": 1, "history": 1, "search_results": 0}
+        assert db_client.is_empty() is False
+        assert db_client.get_latest_price_entry("p1").id == "h1"
+
+    def test_refuses_database_with_data(self):
+        _product(url="https://ja-existe")
+        products, history = self._models()
+        with pytest.raises(ValueError, match="já tem dados"):
+            db_client.bulk_import(products, history)
+        assert db_client.get_product_by_id("p1") is None
+
+    def test_is_all_or_nothing(self):
+        from execution.models import PriceHistory
+
+        products, history = self._models()
+        orphan = PriceHistory(id="h2", price=1.0, scrapedAt=history[0].scrapedAt, productId="nao-existe")
+        with pytest.raises(sqlite3.IntegrityError):
+            db_client.bulk_import(products, history + [orphan])
+        assert db_client.is_empty() is True
+
+
 class TestAppMeta:
     def test_last_full_check_round_trip_and_upsert(self):
         assert db_client.get_last_full_check() is None

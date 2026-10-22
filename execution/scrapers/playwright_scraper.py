@@ -1,8 +1,86 @@
 import logging
+import threading
 
 from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
+
+# Ordem de preferência do navegador. O executável não embute o Chromium
+# (~150 MB): usa o Edge, que vem em todo Windows 10/11, ou o Chrome instalado.
+# None = Chromium do próprio Playwright (em dev, `playwright install chromium`).
+_BROWSER_CANDIDATES: tuple[str | None, ...] = ("msedge", "chrome", None)
+_BROWSER_LABELS = {"msedge": "Microsoft Edge", "chrome": "Google Chrome", None: "Chromium (Playwright)"}
+
+_LAUNCH_ARGS = [
+    "--no-sandbox",
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage",
+]
+
+_NOT_DETECTED = object()
+_NONE_AVAILABLE = object()
+# Navegador escolhido na 1ª chamada (str/None), _NONE_AVAILABLE ou _NOT_DETECTED.
+# Guardado para não pagar a tentativa de cada candidato em toda checagem.
+_browser_choice: object = _NOT_DETECTED
+_choice_lock = threading.Lock()
+
+
+def _reset_browser_choice() -> None:
+    global _browser_choice
+    with _choice_lock:
+        _browser_choice = _NOT_DETECTED
+
+
+def browser_in_use() -> str | None:
+    """Nome do navegador usado no nível 2, ou None se ainda não detectado/nenhum."""
+    choice = _browser_choice
+    if choice is _NOT_DETECTED or choice is _NONE_AVAILABLE:
+        return None
+    return _BROWSER_LABELS[choice]
+
+
+def _launch(p, channel: str | None):
+    kwargs = {"headless": True, "args": _LAUNCH_ARGS}
+    if channel:
+        kwargs["channel"] = channel
+    return p.chromium.launch(**kwargs)
+
+
+def _launch_browser(p):
+    """
+    Abre o navegador headless. Na 1ª vez tenta os candidatos em ordem e lembra
+    o que funcionou; se ele deixar de funcionar (ex: desinstalado), a escolha é
+    esquecida e a próxima chamada detecta de novo. Retorna None se nenhum abrir.
+    """
+    global _browser_choice
+    choice = _browser_choice
+    if choice is _NONE_AVAILABLE:
+        return None
+    if choice is not _NOT_DETECTED:
+        try:
+            return _launch(p, choice)
+        except Exception:
+            _reset_browser_choice()
+            raise
+
+    with _choice_lock:
+        if _browser_choice is not _NOT_DETECTED:  # outra thread detectou enquanto esperávamos
+            return None if _browser_choice is _NONE_AVAILABLE else _launch(p, _browser_choice)
+        for channel in _BROWSER_CANDIDATES:
+            try:
+                browser = _launch(p, channel)
+            except Exception as e:
+                logger.info("playwright_scraper | %s indisponível: %s", _BROWSER_LABELS[channel], str(e).splitlines()[0])
+                continue
+            _browser_choice = channel
+            logger.info("playwright_scraper | usando %s no nível 2 da cascata", _BROWSER_LABELS[channel])
+            return browser
+        _browser_choice = _NONE_AVAILABLE
+        logger.error(
+            "playwright_scraper | nenhum navegador disponível (Edge, Chrome ou Chromium) — "
+            "nível 2 da cascata desativado até reiniciar o app"
+        )
+        return None
 
 # Script executado antes de qualquer JS da página para ocultar sinais de automação
 _STEALTH_JS = """
@@ -36,14 +114,9 @@ def fetch_html_playwright(
     """
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                ],
-            )
+            browser = _launch_browser(p)
+            if browser is None:
+                return None
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 locale="pt-BR",

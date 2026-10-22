@@ -501,6 +501,55 @@ def get_last_valid_price_for_url(url: str) -> float | None:
 
 
 # ─────────────────────────────────────────────
+# Importação em lote (scripts/copy_web_data.py)
+# ─────────────────────────────────────────────
+
+def is_empty() -> bool:
+    """True se o banco não tem nenhum produto, histórico ou resultado de busca."""
+    conn = connect_db()
+    return all(
+        conn.execute(f"SELECT NOT EXISTS (SELECT 1 FROM {table})").fetchone()[0]
+        for table in ("Product", "PriceHistory", "SearchResult")
+    )
+
+
+def bulk_import(
+    products: list[Product],
+    history: list[PriceHistory],
+    search_results: list[SearchResult] = (),
+) -> dict[str, int]:
+    """
+    Insere registros preservando ids e datas, numa única transação (tudo ou nada).
+    Usado só para copiar os dados da versão web para um banco novo; recusa um
+    banco que já tenha dados, para nunca misturar nem sobrescrever nada.
+    """
+    if not is_empty():
+        raise ValueError(f"O banco de destino já tem dados: {DB_PATH}")
+
+    with _write() as conn:
+        conn.executemany(
+            """INSERT INTO Product (id, url, name, imageUrl, store, status, createdAt, updatedAt)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(p.id, p.url, p.name, p.imageUrl, p.store, p.status, _iso(p.createdAt), _iso(p.updatedAt))
+             for p in products],
+        )
+        conn.executemany(
+            "INSERT INTO PriceHistory (id, price, inStock, scrapedAt, productId) VALUES (?, ?, ?, ?, ?)",
+            [(h.id, h.price, h.inStock, _iso(h.scrapedAt), h.productId) for h in history],
+        )
+        conn.executemany(
+            """INSERT INTO SearchResult
+               (id, search_id, query, store, title, price, currency,
+                image_url, product_url, rating, review_count, found_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(r.id, r.search_id, r.query, r.store, r.title, r.price, r.currency,
+              r.image_url, r.product_url, r.rating, r.review_count, _iso(r.found_at))
+             for r in search_results],
+        )
+    return {"products": len(products), "history": len(history), "search_results": len(search_results)}
+
+
+# ─────────────────────────────────────────────
 # AppMeta — estado interno do app
 # ─────────────────────────────────────────────
 

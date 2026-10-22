@@ -51,6 +51,13 @@ LOCK_PATH = DATA_DIR / "app.lock"
 # origem (host + porta) — mudar de porta faria esses dados "sumirem".
 PORT_PATH = DATA_DIR / "port"
 
+# Chromium do Playwright, se um dia for baixado pelo app (o nível 2 usa antes o
+# Edge/Chrome do sistema). No executável, aponta o Playwright para a pasta de
+# dados em vez de um caminho dentro do pacote, que é somente leitura.
+BROWSERS_DIR = DATA_DIR / "browsers"
+if is_frozen():
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(BROWSERS_DIR))
+
 # Frontend buildado (`pnpm build`): no executável vai empacotado como web_dist/
 WEB_DIST_DIR = Path(
     os.getenv("MV_WEB_DIST")
