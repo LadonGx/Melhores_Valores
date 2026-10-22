@@ -54,7 +54,7 @@ SQLite file created automatically on first access, in the user data dir
 Schema changes: append a new entry to `MIGRATIONS` in `execution/db_schema.py` (versioned by `PRAGMA user_version`).
 
 > Branch `exe` is migrating to a single-process desktop app — see `docs/plano-executavel.md`.
-> Done: SQLite (Phase 2). Still pending: Redis → memory, Celery → threads/APScheduler, packaging.
+> Done: SQLite (Phase 2), in-memory cache (Phase 3). Still pending: Celery → threads/APScheduler, packaging.
 
 ## Architecture
 
@@ -65,7 +65,7 @@ The system follows a **3-layer architecture** (documented in `.agents/workflows/
 3. **Execution** (`execution/`) — Deterministic, focused modules (scrapers, adapters, cache, db)
 
 ### Services (docker-compose, legacy until Phase 5 of the exe plan)
-- **redis**: Redis 7 (port 6379) — cache + Celery broker
+- **redis**: Redis 7 (port 6379) — Celery broker only (cache is in memory since Phase 3)
 - **api**: FastAPI on port 8000
 - **worker**: Celery worker (2 concurrent tasks)
 - **beat**: Celery Beat — triggers `schedule_all_products()` every 6 hours
@@ -75,13 +75,13 @@ The system follows a **3-layer architecture** (documented in `.agents/workflows/
 ```
 POST /monitor/add {"url": "..."} 
   → detect store → enqueue Celery task
-  → Worker: check Redis cache (2h TTL)
+  → Worker: check in-memory cache (2h TTL)
   → Cache miss: 3-level scraping cascade:
       1. httpx (fast, free)
       2. Playwright/Chromium (slower, free)
       3. Firecrawl API (paid, last resort)
   → Route to store adapter (amazon/mercadolivre)
-  → Save to SQLite via db_client → update Redis cache
+  → Save to SQLite via db_client → update in-memory cache
 ```
 
 ### Request Flow: Product Search
@@ -108,7 +108,7 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 | `execution/settings.py` | User data dir, DB path, `.env`/`config.env` loading |
 | `execution/scraping_orchestrator.py` | 3-level cascade scraping strategy |
 | `execution/search_orchestrator.py` | Multi-store search coordination |
-| `execution/cache_manager.py` | Redis get/set with SHA256 URL keys |
+| `execution/cache_manager.py` | In-memory TTL cache (`memory_cache`, thread-safe) with SHA256 URL keys — replaces Redis |
 | `execution/adapters/` | Store-specific HTML parsers (amazon, mercadolivre) |
 | `execution/scrapers/` | HTTP fetching strategies (httpx, Playwright) |
 | `execution/search_scrapers/` | Store search page scrapers |
@@ -118,7 +118,7 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 - **`db_client.py` is the only DB access point** — never touch `sqlite3` / the DB file from other modules.
 - **DB access is sync** — one connection per thread; writes go through `_write()` (lock + transaction). Do not use async/await with it.
 - **Dates are stored as ISO 8601 UTC text** (`db_client._iso`) — keep that single format so text ordering/comparison stays correct.
-- **Cache-first**: Always check Redis before scraping; only escalate through the cascade on cache miss.
+- **Cache-first**: Always check the cache (`cache_manager`) before scraping; only escalate through the cascade on cache miss. The cache is per-process and lost on exit (it is only an optimization).
 - **Adapter pattern**: Each store has an isolated adapter — changes in one store's layout only require editing that store's file.
 - **Firecrawl is the last resort** — it is a paid API; only use it when httpx and Playwright both fail.
 

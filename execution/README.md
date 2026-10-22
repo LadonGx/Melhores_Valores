@@ -7,7 +7,7 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 - Expose REST API endpoints (FastAPI)
 - Run async scraping tasks (Celery)
 - Store/retrieve data (SQLite, local file in the user data dir)
-- Cache prices (Redis)
+- Cache prices (in memory, per process)
 - Coordinate multi-level scraping cascade
 - Coordinate multi-store product search
 
@@ -23,7 +23,7 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 | `settings.py` | Data dir, DB path, config loading | Adding paths/config |
 | `scraping_orchestrator.py` | 3-level cascade logic | Changing scraping strategy |
 | `search_orchestrator.py` | Multi-store search | Changing search logic/relevance |
-| `cache_manager.py` | Redis get/set | Changing cache behavior |
+| `cache_manager.py` | In-memory TTL cache (`memory_cache`) | Changing cache behavior |
 | `store_detection.py` | URL → store string | Adding new store detection |
 | `firecrawl_api.py` | Paid API wrapper | Changing Firecrawl integration |
 
@@ -31,7 +31,7 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 
 1. **`db_client.py` is the only DB access point.** Never use `sqlite3` elsewhere.
 2. **DB access is sync.** One connection per thread, writes via `_write()`. No `async/await`.
-3. **Cache-first.** Always check Redis before scraping.
+3. **Cache-first.** Always check the cache before scraping.
 4. **Firecrawl is last resort.** Only call after httpx + Playwright both fail.
 5. **Adapters are isolated.** Each store adapter changes independently.
 
@@ -45,7 +45,7 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 
 ```
 MV_DATA_DIR   → (optional) overrides the user data dir where the SQLite file lives
-REDIS_URL     → Redis connection string
+REDIS_URL     → Redis connection string (Celery broker only, until Phase 4)
 FIRECRAWL_API_KEY → Paid API key (Firecrawl)
 ```
 

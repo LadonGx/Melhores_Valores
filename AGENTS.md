@@ -18,7 +18,7 @@
 | Layer | Technology |
 |---|---|
 | Frontend | React 18, TypeScript, Vite, React Query v5, React Router v6, Zustand, Axios, CSS Modules |
-| Backend | Python 3.11+, FastAPI, Celery, SQLite (`sqlite3`, sync), Redis 7 |
+| Backend | Python 3.11+, FastAPI, Celery (Redis 7 as broker), SQLite (`sqlite3`, sync), in-memory cache |
 | Scraping | httpx, Playwright/Chromium, Firecrawl API |
 | Infra | Docker Compose (redis, api, worker, beat) — legacy; branch `exe` is becoming a desktop executable (`docs/plano-executavel.md`) |
 | Monorepo | pnpm workspaces: `apps/web`, `packages/types`, `packages/utils` |
@@ -49,7 +49,7 @@ execution/
   settings.py            ← User data dir, DB path, config loading
   scraping_orchestrator.py ← 3-level cascade logic
   search_orchestrator.py ← Multi-store search with relevance filter
-  cache_manager.py       ← Redis SHA256-keyed cache (2h TTL)
+  cache_manager.py       ← In-memory SHA256-keyed TTL cache (2h TTL, thread-safe)
   store_detection.py     ← URL → store string classifier
   firecrawl_api.py       ← Paid API wrapper (last resort)
   adapters/              ← Per-store HTML parsers
@@ -76,7 +76,7 @@ apps/web/src/
 
 1. **`db_client.py` is the ONLY DB access point.** Never use `sqlite3` or open the DB file from any other module.
 2. **DB access is sync.** One connection per thread; writes go through `_write()` (lock + transaction). Never use `async/await` with DB calls.
-3. **Cache-first strategy.** Always check Redis before scraping. Never bypass the cache.
+3. **Cache-first strategy.** Always check the cache (`cache_manager`) before scraping. Never bypass the cache.
 4. **Firecrawl is last resort** (paid API). Only called when httpx + Playwright both fail.
 5. **Adapter isolation.** Each store adapter is independent — changes in one never touch another.
 6. **JS-required stores skip Level 1.** `mercadolivre` skips httpx and goes straight to Playwright.

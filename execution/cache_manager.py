@@ -1,14 +1,52 @@
 import hashlib
 import json
-import os
+import threading
+import time
+from typing import Any, Callable
 
-import redis
-from dotenv import load_dotenv
 
-load_dotenv()
+class TTLCache:
+    """
+    Substituto em memória do Redis para o app desktop (processo único).
+    Expõe só o que o projeto usava do Redis (get / setex) e é thread-safe,
+    já que API e workers rodam em threads do mesmo processo.
 
-# Conexão com Redis (Usado para Cache e Fila do Celery)
-redis_client = redis.Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    O conteúdo se perde ao fechar o app — aceitável, o cache é só otimização.
+    """
+
+    # Acima deste tamanho, cada setex varre e descarta as chaves expiradas
+    _PRUNE_THRESHOLD = 1024
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._data: dict[str, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+        self._clock = clock
+
+    def get(self, key: str) -> Any:
+        with self._lock:
+            item = self._data.get(key)
+            if item is None:
+                return None
+            expires_at, value = item
+            if self._clock() >= expires_at:
+                del self._data[key]
+                return None
+            return value
+
+    def setex(self, key: str, ttl: int, value: Any) -> None:
+        with self._lock:
+            now = self._clock()
+            self._data[key] = (now + ttl, value)
+            if len(self._data) > self._PRUNE_THRESHOLD:
+                self._data = {k: v for k, v in self._data.items() if v[0] > now}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+
+# Cache compartilhado pelo processo (preços e avisos de busca)
+memory_cache = TTLCache()
 
 
 def _cache_key(product_url: str) -> str:
@@ -17,8 +55,8 @@ def _cache_key(product_url: str) -> str:
 
 
 def get_cached_price(product_url: str):
-    """Verifica se existe um preço recente no Redis para a URL informada."""
-    raw_value = redis_client.get(_cache_key(product_url))
+    """Verifica se existe um preço recente em cache para a URL informada."""
+    raw_value = memory_cache.get(_cache_key(product_url))
     if not raw_value:
         return None
 
@@ -37,11 +75,13 @@ def set_cached_price(
     store: str | None = None,
     ttl: int = 7200,
 ):
-    """Salva o snapshot do produto no Redis com TTL padrão de 2 horas."""
+    """Salva o snapshot do produto em cache com TTL padrão de 2 horas."""
     payload = {
         "url": product_url,
         "price": float(price),
         "name": name,
         "store": store,
     }
-    redis_client.setex(_cache_key(product_url), ttl, json.dumps(payload))
+    # Guardado como JSON (como no Redis): quem lê recebe sempre uma cópia nova,
+    # então alterar o dict retornado não altera o cache.
+    memory_cache.setex(_cache_key(product_url), ttl, json.dumps(payload))

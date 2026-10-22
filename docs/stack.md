@@ -27,8 +27,8 @@
 ### Redis 7
 - Port: 6379 (Docker)
 - Usage 1: Celery broker + results backend
-- Usage 2: Price cache (SHA256 keys, 2h TTL)
-- Client: `redis-py` (sync) in `cache_manager.py`
+- Usage 2: ~~Price cache~~ — replaced by the in-memory `TTLCache` in `cache_manager.py` (branch `exe`, Phase 3)
+- Client: only used indirectly by Celery (kombu); no project module imports `redis`
 
 ### httpx
 - Sync HTTP client for Level 1 scraping

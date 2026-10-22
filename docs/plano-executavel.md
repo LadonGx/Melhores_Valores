@@ -149,19 +149,24 @@ Tarefas:
 
 ---
 
-### Fase 3: Cache e status de busca, de Redis para memória
+### Fase 3: Cache e status de busca, de Redis para memória ✅
 
 **Objetivo:** tirar o Redis sem mudar quem chama.
 
-- [ ] `cache_manager.py`: classe `TTLCache` pequena e thread-safe (dict + `time.monotonic()` + `Lock`), ou `cachetools.TTLCache`. Mantém `get_cached_price(url)` e `set_cached_price(url, price, name, store, ttl=7200)` com a mesma chave SHA256.
-- [ ] Expor `get(key)` e `setex(key, ttl, value)` no lugar de `redis_client`, para o `search_status.py` mudar só o import.
-- [ ] `search_status.py`: passa a usar esse cache (TTL de 30 min mantido).
-- [ ] Ajustar `test_search_status.py` (hoje faz patch de `redis_client`).
-- [ ] Remover `redis` do `requirements.txt`.
+- [x] `cache_manager.py`: classe `TTLCache` própria, pequena e thread-safe (dict + `time.monotonic()` + `Lock`, relógio injetável para testes), sem dependência nova. `get_cached_price(url)` e `set_cached_price(url, price, name, store, ttl=7200)` mantidos, com a mesma chave SHA256 e o valor guardado como JSON (quem lê recebe uma cópia).
+- [x] Instância `memory_cache` com `get(key)` e `setex(key, ttl, value)` no lugar de `redis_client`; o `search_status.py` mudou só o import.
+- [x] `search_status.py` usa esse cache (TTL de 30 min mantido).
+- [x] Chaves expiradas são descartadas na leitura e, quando o cache passa de 1024 chaves, a cada escrita, para a memória não crescer sem limite com o app aberto por dias.
+- [x] Testes: `test_cache_manager.py` (13 testes: TTL, sobrescrita, limpeza, concorrência, cache de preço) e `test_search_status.py` ajustado + teste de ida e volta com expiração. Total: 149 testes passando.
+- [ ] Remover `redis` do `requirements.txt`: **adiado para a Fase 4**. O Celery ainda usa o Redis como broker e precisa do pacote `redis`. Nenhum módulo do projeto importa mais o `redis` diretamente.
 
 Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_caching_rules.md`).
 
-**Pronto quando:** testes passando e nenhuma importação de `redis` no código.
+> **Até a Fase 4 entrar:** o cache agora vive dentro de cada processo. Enquanto API (uvicorn) e worker (Celery) forem processos separados, (1) os avisos de loja bloqueada gravados pela busca no worker **não chegam** ao `GET /search/{id}` da API, e (2) o cache de preço do worker não é visto pelo `/refresh` da API (que já ignora o cache, então isso não muda nada). Os dois voltam a funcionar quando tudo rodar num processo só (Fase 4).
+>
+> Validação: com o scraper simulado (o Mercado Livre devolveu `login_wall` nessa rodada), `run_price_pipeline` fez scraping na 1ª chamada, respondeu `source=cache` na 2ª e voltou a fazer scraping com `skip_cache=True`; os avisos de busca fizeram ida e volta.
+
+**Pronto quando:** testes passando e nenhuma importação de `redis` no código do projeto. ✅
 
 ---
 
@@ -179,8 +184,9 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
   - `BackgroundScheduler` do APScheduler, `schedule_all_products` a cada 6h, `max_instances=1`, `coalesce=True`.
   - **Recuperação na abertura:** gravar `last_full_check` numa tabela `AppMeta` do SQLite. Na abertura, se passaram mais de 6h, agendar uma rodada para ~1 min depois (dá tempo da UI abrir).
 - [ ] Playwright em threads: o `sync_playwright` funciona em threads do pool, mas **não** dentro da thread do event loop. Hoje isso já está certo (`/refresh` usa `asyncio.to_thread`, e `/search` é `def`, que roda no threadpool do FastAPI). Manter assim.
-- [ ] Remover `celery` do `requirements.txt` e do `conftest.py`.
+- [ ] Remover `celery` **e `redis`** do `requirements.txt` (o `redis` ficou da Fase 3 só por ser o broker do Celery), o stub do `celery` do `conftest.py` e o `REDIS_URL` do `.env.example`/docs.
 - [ ] Atualizar `test_worker_pipeline.py` se ele depender do objeto Celery.
+- [ ] Conferir que os avisos de loja bloqueada (`search_status`) voltaram a aparecer no `GET /search/{id}` (dependem de busca e API no mesmo processo).
 
 **Pronto quando:** sem Docker, `POST /monitor/add` grava o preço, `POST /search` + `GET /search/{id}` devolvem resultados, e o job de 6h aparece no log.
 
@@ -247,7 +253,7 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 ### Fase 8: Build multiplataforma e distribuição
 
 - [ ] `.github/workflows/build-desktop.yml`: disparado por tag `v*`, matriz `windows-latest` / `macos-latest` / `ubuntu-latest` (o PyInstaller não faz cross-compile), roda os testes, faz o build e anexa os `.zip` ao **GitHub Release**.
-- [ ] `README` da branch com download, aviso de SmartScreen ("Mais informações → Executar assim mesmo") e onde ficam os dados.
+- [ ] **README novo para a versão .exe, sem substituir o `README.md` atual** (que continua descrevendo a versão servidor/Docker): criar `README-EXE.md` na raiz e linkar a partir do `README.md`. Conteúdo: o que é a versão desktop e como difere da servidor, download pelo GitHub Releases, instalação e primeira execução, aviso do SmartScreen ("Mais informações → Executar assim mesmo"), onde ficam os dados (`%LOCALAPPDATA%\MelhoresValores\`) e como fazer backup, `config.env` (chave opcional do Firecrawl), navegador usado pelo scraping (Edge/Chrome/Chromium), limitações (checagem só com o app aberto), como gerar o build a partir do código e solução de problemas (porta ocupada, logs). Escrito no final, quando o comportamento já estiver fechado.
 - [ ] Versão única em `execution/__init__.py` (`__version__`), usada no build e na checagem de atualização.
 
 **Pronto quando:** criar a tag `v0.1.0` gera um Release com os 3 artefatos.
@@ -306,10 +312,10 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - [x] F0 Preparação da branch
 - [ ] F1 `settings.py` e pasta de dados (parcial: `DATA_DIR`/`DB_PATH`/config prontos)
 - [x] F2 `db_client.py` em SQLite + `models.py` + testes reais
-- [ ] F3 Cache e status de busca em memória
+- [x] F3 Cache e status de busca em memória (remoção do pacote `redis` fica para a F4)
 - [ ] F4 `task_runner.py` + APScheduler com recuperação na abertura
 - [ ] F5 `desktop_app.py` + `main.py`, validado sem Docker
 - [ ] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional
 - [ ] F7 PyInstaller `--onedir`, testado na Windows Sandbox
-- [ ] F8 Workflow multiplataforma + GitHub Release
+- [ ] F8 Workflow multiplataforma + GitHub Release + `README-EXE.md` (novo, o `README.md` atual fica)
 - [ ] F9 Atualizações, bandeja, pywebview, configurações

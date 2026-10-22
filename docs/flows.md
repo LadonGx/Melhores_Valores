@@ -105,7 +105,7 @@ User → DELETE /product/{id}
 
 ```
 Cache key: SHA256(normalized_url)
-Cache value: { price, name, store, url } as JSON
+Cache value: { price, name, store, url } as JSON, in the in-memory `memory_cache` (per process, lost on exit)
 TTL: 7200 seconds (2 hours)
 
 Cache HIT  → skip scraping, write price to DB, return
