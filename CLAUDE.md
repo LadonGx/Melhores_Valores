@@ -49,10 +49,12 @@ celery -A execution.worker_tasks beat --loglevel=info
 ```
 
 ### Database
-```bash
-prisma generate                            # Regenerate Prisma client after schema changes
-prisma migrate dev --name <migration_name> # Apply schema changes
-```
+SQLite file created automatically on first access, in the user data dir
+(`%LOCALAPPDATA%\MelhoresValores\melhores_valores.db` on Windows; override with `MV_DATA_DIR`).
+Schema changes: append a new entry to `MIGRATIONS` in `execution/db_schema.py` (versioned by `PRAGMA user_version`).
+
+> Branch `exe` is migrating to a single-process desktop app — see `docs/plano-executavel.md`.
+> Done: SQLite (Phase 2). Still pending: Redis → memory, Celery → threads/APScheduler, packaging.
 
 ## Architecture
 
@@ -62,8 +64,7 @@ The system follows a **3-layer architecture** (documented in `.agents/workflows/
 2. **Orchestrators** (`execution/*_orchestrator.py`, `execution/worker_tasks.py`) — Decision logic that coordinates execution
 3. **Execution** (`execution/`) — Deterministic, focused modules (scrapers, adapters, cache, db)
 
-### Services (docker-compose)
-- **db**: PostgreSQL 15 (port 5432)
+### Services (docker-compose, legacy until Phase 5 of the exe plan)
 - **redis**: Redis 7 (port 6379) — cache + Celery broker
 - **api**: FastAPI on port 8000
 - **worker**: Celery worker (2 concurrent tasks)
@@ -80,7 +81,7 @@ POST /monitor/add {"url": "..."}
       2. Playwright/Chromium (slower, free)
       3. Firecrawl API (paid, last resort)
   → Route to store adapter (amazon/mercadolivre)
-  → Save to PostgreSQL via Prisma → update Redis cache
+  → Save to SQLite via db_client → update Redis cache
 ```
 
 ### Request Flow: Product Search
@@ -101,28 +102,31 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 |------|---------|
 | `execution/web_server.py` | FastAPI app — 4 endpoints (health, monitor, history, search) |
 | `execution/worker_tasks.py` | Celery app config + all task definitions |
-| `execution/db_client.py` | **Only** place DB is accessed — Prisma CRUD operations |
+| `execution/db_client.py` | **Only** place DB is accessed — SQLite (`sqlite3`) CRUD operations |
+| `execution/db_schema.py` | DB schema + migrations: `Product`, `PriceHistory`, `SearchResult` |
+| `execution/models.py` | Pydantic models returned by `db_client` (same field names the Prisma models had) |
+| `execution/settings.py` | User data dir, DB path, `.env`/`config.env` loading |
 | `execution/scraping_orchestrator.py` | 3-level cascade scraping strategy |
 | `execution/search_orchestrator.py` | Multi-store search coordination |
 | `execution/cache_manager.py` | Redis get/set with SHA256 URL keys |
 | `execution/adapters/` | Store-specific HTML parsers (amazon, mercadolivre) |
 | `execution/scrapers/` | HTTP fetching strategies (httpx, Playwright) |
 | `execution/search_scrapers/` | Store search page scrapers |
-| `schema.prisma` | DB schema: `Product`, `PriceHistory`, `SearchResult` |
 
 ## Critical Design Constraints
 
-- **`db_client.py` is the only DB access point** — never call Prisma directly from other modules.
-- **Prisma is sync-only** (`interface = "sync"` in schema) — do not use async/await with it.
+- **`db_client.py` is the only DB access point** — never touch `sqlite3` / the DB file from other modules.
+- **DB access is sync** — one connection per thread; writes go through `_write()` (lock + transaction). Do not use async/await with it.
+- **Dates are stored as ISO 8601 UTC text** (`db_client._iso`) — keep that single format so text ordering/comparison stays correct.
 - **Cache-first**: Always check Redis before scraping; only escalate through the cascade on cache miss.
 - **Adapter pattern**: Each store has an isolated adapter — changes in one store's layout only require editing that store's file.
 - **Firecrawl is the last resort** — it is a paid API; only use it when httpx and Playwright both fail.
 
 ## Environment Variables
 
-Required in `.env`:
+In `.env` (repo, dev) or `config.env` (user data dir):
 ```
-DATABASE_URL="postgresql://user:password@localhost:5432/price_tracker"
 REDIS_URL="redis://localhost:6379/0"
-FIRECRAWL_API_KEY="..."
+FIRECRAWL_API_KEY="..."   # optional — without it, cascade level 3 is skipped
+MV_DATA_DIR="./.data"     # optional — overrides the user data dir
 ```

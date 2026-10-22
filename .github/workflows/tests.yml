@@ -2,15 +2,13 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, exe]
   push:
-    branches: [main]
+    branches: [main, exe]
 
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_dummy"
     steps:
       - uses: actions/checkout@v4
 
@@ -20,8 +18,6 @@ jobs:
           cache: "pip"
 
       - run: pip install -r requirements.txt -r requirements-dev.txt
-
-      - run: prisma generate
 
       - run: python -m pytest execution/tests -v
 

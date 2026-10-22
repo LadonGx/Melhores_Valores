@@ -1,22 +1,24 @@
 """
 Pytest configuration for unit tests.
 
-Mocks heavy optional dependencies (playwright, prisma, celery, redis) so the
+Mocks heavy optional dependencies (playwright, celery, redis) so the
 adapter and pipeline tests can run locally without Docker.
 """
 
+import os
 import sys
+import tempfile
 from unittest.mock import MagicMock
+
+# Nenhum teste pode tocar a pasta de dados real do usuário: settings.py lê esta
+# variável no import, então ela precisa estar definida antes de qualquer import
+# de `execution`. Testes do db_client usam um banco próprio em tmp_path.
+os.environ["MV_DATA_DIR"] = tempfile.mkdtemp(prefix="mv-tests-")
 
 # Stub playwright before any module imports it
 playwright_stub = MagicMock()
 sys.modules["playwright"] = playwright_stub
 sys.modules["playwright.sync_api"] = playwright_stub
-
-# Stub prisma (DB layer) — DB calls are mocked per-test anyway
-prisma_stub = MagicMock()
-sys.modules["prisma"] = prisma_stub
-sys.modules["prisma.models"] = prisma_stub
 
 # Stub celery and redis (not needed for unit tests)
 celery_stub = MagicMock()

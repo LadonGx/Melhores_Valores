@@ -18,9 +18,9 @@
 | Layer | Technology |
 |---|---|
 | Frontend | React 18, TypeScript, Vite, React Query v5, React Router v6, Zustand, Axios, CSS Modules |
-| Backend | Python 3.11+, FastAPI, Celery, Prisma (sync), PostgreSQL 15, Redis 7 |
+| Backend | Python 3.11+, FastAPI, Celery, SQLite (`sqlite3`, sync), Redis 7 |
 | Scraping | httpx, Playwright/Chromium, Firecrawl API |
-| Infra | Docker Compose (db, redis, api, worker, beat) |
+| Infra | Docker Compose (redis, api, worker, beat) — legacy; branch `exe` is becoming a desktop executable (`docs/plano-executavel.md`) |
 | Monorepo | pnpm workspaces: `apps/web`, `packages/types`, `packages/utils` |
 
 ---
@@ -43,7 +43,10 @@ Execution (execution/)           ← Deterministic modules (scrapers, adapters, 
 execution/
   web_server.py          ← FastAPI routes (port 8000)
   worker_tasks.py        ← Celery tasks + Beat schedule
-  db_client.py           ← ONLY DB access point (Prisma sync)
+  db_client.py           ← ONLY DB access point (SQLite, sync)
+  db_schema.py           ← SQLite schema + migrations (PRAGMA user_version)
+  models.py              ← Pydantic models returned by db_client
+  settings.py            ← User data dir, DB path, config loading
   scraping_orchestrator.py ← 3-level cascade logic
   search_orchestrator.py ← Multi-store search with relevance filter
   cache_manager.py       ← Redis SHA256-keyed cache (2h TTL)
@@ -71,8 +74,8 @@ apps/web/src/
 
 ## Critical Design Constraints
 
-1. **`db_client.py` is the ONLY DB access point.** Never import or call Prisma from any other module.
-2. **Prisma is sync-only** (`interface = "sync"`). Never use `async/await` with Prisma calls.
+1. **`db_client.py` is the ONLY DB access point.** Never use `sqlite3` or open the DB file from any other module.
+2. **DB access is sync.** One connection per thread; writes go through `_write()` (lock + transaction). Never use `async/await` with DB calls.
 3. **Cache-first strategy.** Always check Redis before scraping. Never bypass the cache.
 4. **Firecrawl is last resort** (paid API). Only called when httpx + Playwright both fail.
 5. **Adapter isolation.** Each store adapter is independent — changes in one never touch another.
@@ -115,7 +118,7 @@ apps/web/src/
 
 1. **No business logic in pages.** Pages compose features and handle layout only.
 2. **No direct API calls in components.** All API calls go through `services/`.
-3. **No Prisma outside `db_client.py`.**
+3. **No SQL outside `db_client.py`.**
 4. **No Firecrawl calls outside `firecrawl_api.py`.**
 5. **Mutations invalidate React Query cache** — always call `queryClient.invalidateQueries` on success.
 6. **Celery tasks are idempotent** — re-running a task must not corrupt data.
@@ -128,8 +131,9 @@ apps/web/src/
 
 ## Common Mistakes to Avoid
 
-- **DO NOT** call `prisma.product.find_many()` outside `db_client.py`.
-- **DO NOT** add `async def` to db_client functions — Prisma is sync.
+- **DO NOT** run SQL or call `sqlite3` outside `db_client.py`.
+- **DO NOT** add `async def` to db_client functions — DB access is sync.
+- **DO NOT** store dates in any format other than ISO 8601 UTC (`db_client._iso`) — ordering is by text.
 - **DO NOT** create new Axios instances — use the singleton from `services/api.ts`.
 - **DO NOT** fetch data in page components — use hooks from `features/`.
 - **DO NOT** use `mercadolivre` in Level 1 (httpx) scraping — it requires JS rendering.
@@ -152,7 +156,7 @@ These changes are **safe** without broader review:
 - Adding new React Query hooks in `features/*/hooks/`
 
 These changes **require explicit confirmation**:
-- Modifying `schema.prisma` (requires migration)
+- Modifying the DB schema (append a new migration to `execution/db_schema.py`; never edit a released one)
 - Changing `db_client.py` function signatures
 - Changing `worker_tasks.py` task names (breaks in-flight tasks)
 - Modifying `cache_manager.py` key format (invalidates all cached data)
@@ -162,7 +166,7 @@ These changes **require explicit confirmation**:
 These folders/files are **never modified without explicit user instruction**:
 - `.env` (secrets)
 - `docker-compose.yml`
-- `schema.prisma` (without migration plan)
+- `execution/db_schema.py` released migrations
 - `pnpm-workspace.yaml`
 
 ---
@@ -175,7 +179,7 @@ These folders/files are **never modified without explicit user instruction**:
 - [ ] If adding types: am I adding to `packages/types/src/index.ts`?
 - [ ] If adding API call in frontend: am I using `services/`?
 - [ ] If adding server state: am I using React Query (not Zustand)?
-- [ ] Does this change require a Prisma migration?
+- [ ] Does this change require a new migration in `db_schema.py`?
 - [ ] Does this change break existing Celery task names?
 
 ---

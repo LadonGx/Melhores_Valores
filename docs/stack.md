@@ -16,18 +16,12 @@
 - Entry: `execution/worker_tasks.py` (`app = Celery(...)`)
 - Run: `celery -A execution.worker_tasks worker --loglevel=info`
 
-### Prisma (Python)
-- Client: `prisma` Python package (sync interface)
-- Schema: `schema.prisma` at repo root
-- Generator: `prisma-client-py`
-- Interface: `sync` — all calls are blocking
-- Connection: managed by `db_client.py`, auto-connected on first call
-- Migrations: `prisma migrate dev --name <name>`
-- Client regen: `prisma generate`
-
-### PostgreSQL 15
-- Port: 5432 (Docker)
-- Database: `price_tracker`
+### SQLite
+- Driver: `sqlite3` (Python stdlib), sync
+- File: `<user data dir>/melhores_valores.db` (`MV_DATA_DIR` / `MV_DB_PATH` override) — see `execution/settings.py`
+- Schema + migrations: `execution/db_schema.py`, versioned by `PRAGMA user_version`, applied on first connection
+- Mode: WAL, foreign keys on; one connection per thread, writes serialized by a lock
+- Models: Pydantic, `execution/models.py`  
 - Access: only through `db_client.py`
 
 ### Redis 7
@@ -132,7 +126,6 @@
 
 | Service | Image | Port | Role |
 |---|---|---|---|
-| db | postgres:15 | 5432 | Primary database |
 | redis | redis:7 | 6379 | Cache + message broker |
 | api | custom (Dockerfile) | 8000 | FastAPI REST server |
 | worker | custom | — | Celery async worker |

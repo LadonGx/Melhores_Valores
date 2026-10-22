@@ -29,6 +29,12 @@ apps/web/dist/
 apps/web/.env
 *.tsbuildinfo
 
+# Banco SQLite local (MV_DATA_DIR em dev)
+.data/
+*.db
+*.db-wal
+*.db-shm
+
 # Others
 *.log
 .DS_Store
