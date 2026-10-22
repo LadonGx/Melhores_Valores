@@ -162,7 +162,7 @@ Tarefas:
 
 Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_caching_rules.md`).
 
-> **Até a Fase 4 entrar:** o cache agora vive dentro de cada processo. Enquanto API (uvicorn) e worker (Celery) forem processos separados, (1) os avisos de loja bloqueada gravados pela busca no worker **não chegam** ao `GET /search/{id}` da API, e (2) o cache de preço do worker não é visto pelo `/refresh` da API (que já ignora o cache, então isso não muda nada). Os dois voltam a funcionar quando tudo rodar num processo só (Fase 4).
+> **(Resolvido na Fase 4, quando tudo passou a rodar num processo só.)** Até a Fase 4 entrar, o cache vivia dentro de cada processo. Enquanto API (uvicorn) e worker (Celery) forem processos separados, (1) os avisos de loja bloqueada gravados pela busca no worker **não chegam** ao `GET /search/{id}` da API, e (2) o cache de preço do worker não é visto pelo `/refresh` da API (que já ignora o cache, então isso não muda nada). Os dois voltam a funcionar quando tudo rodar num processo só (Fase 4).
 >
 > Validação: com o scraper simulado (o Mercado Livre devolveu `login_wall` nessa rodada), `run_price_pipeline` fez scraping na 1ª chamada, respondeu `source=cache` na 2ª e voltou a fazer scraping com `skip_cache=True`; os avisos de busca fizeram ida e volta.
 
@@ -170,34 +170,41 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 
 ---
 
-### Fase 4: Fila e agendamento, de Celery para threads + APScheduler
+### Fase 4: Fila e agendamento, de Celery para threads + APScheduler ✅
 
 **Objetivo:** tirar o Celery mantendo `.delay()` e `task.id` no `web_server.py`.
 
-- [ ] Novo `execution/task_runner.py`:
-  - `ThreadPoolExecutor(max_workers=2)` (igual ao `--concurrency=2` atual).
-  - Decorador `@task` que adiciona `.delay(*args)` à função: gera `uuid4`, submete ao pool e devolve um objeto com `.id`. Com `@task(bind=True)`, injeta um `self` com `self.request.id`. Assim `task_search_products` continua usando o mesmo ID como `search_id`.
-  - Exceções dentro da task vão para o log (o pool engole exceções em silêncio se ninguém pedir o resultado).
-  - `shutdown()` chamado ao fechar o app.
-- [ ] `worker_tasks.py`: trocar `from celery import Celery` / `@app.task` pelo `@task` novo. `run_price_pipeline`, `process_price_check`, `schedule_all_products` e `task_search_products` continuam com o mesmo corpo.
-- [ ] Agendador (`execution/scheduler.py`):
-  - `BackgroundScheduler` do APScheduler, `schedule_all_products` a cada 6h, `max_instances=1`, `coalesce=True`.
-  - **Recuperação na abertura:** gravar `last_full_check` numa tabela `AppMeta` do SQLite. Na abertura, se passaram mais de 6h, agendar uma rodada para ~1 min depois (dá tempo da UI abrir).
-- [ ] Playwright em threads: o `sync_playwright` funciona em threads do pool, mas **não** dentro da thread do event loop. Hoje isso já está certo (`/refresh` usa `asyncio.to_thread`, e `/search` é `def`, que roda no threadpool do FastAPI). Manter assim.
-- [ ] Remover `celery` **e `redis`** do `requirements.txt` (o `redis` ficou da Fase 3 só por ser o broker do Celery), o stub do `celery` do `conftest.py` e o `REDIS_URL` do `.env.example`/docs.
-- [ ] Atualizar `test_worker_pipeline.py` se ele depender do objeto Celery.
-- [ ] Conferir que os avisos de loja bloqueada (`search_status`) voltaram a aparecer no `GET /search/{id}` (dependem de busca e API no mesmo processo).
+- [x] Novo `execution/task_runner.py`:
+  - `ThreadPoolExecutor(max_workers=2)` (igual ao `--concurrency=2` atual), criado sob demanda e recriado se for encerrado.
+  - Decorador `@task` / `@task(bind=True)`: `.delay(*args, **kwargs)` gera `uuid4`, submete ao pool e devolve `TaskHandle(id, future)`. Com `bind=True`, injeta um `self` com `self.request.id == handle.id`, então `task_search_products` continua usando o mesmo ID como `search_id`. Chamar a função direto executa na thread atual, como no Celery.
+  - Exceções dentro da task vão para o log com o id da tarefa (o pool engoliria em silêncio).
+  - `shutdown()` chamado ao fechar o app (descarta o que estava na fila).
+- [x] `worker_tasks.py`: `Celery(...)`, `@app.task` e `beat_schedule` substituídos pelo `@task` novo. `run_price_pipeline`, `process_price_check`, `schedule_all_products` e `task_search_products` continuam com o mesmo corpo.
+- [x] Agendador (`execution/scheduler.py`):
+  - `BackgroundScheduler` do APScheduler (UTC), `run_full_check` a cada 6h, `max_instances=1`, `coalesce=True`, `misfire_grace_time=None` (se o PC dormir, roda ao acordar).
+  - **Recuperação na abertura:** `last_full_check` fica numa tabela `AppMeta` do SQLite (migração v2). Ao abrir, a próxima rodada vai para última + 6h; se esse horário já passou (ou nunca rodou), para daqui a 1 minuto. Isso mantém o ritmo de 6h entre aberturas, em vez de recomeçar a contagem a cada abertura.
+  - Diferença em relação ao Celery Beat: o Beat rodava em horários fixos (`crontab(minute=0, hour="*/6")`); agora o intervalo conta a partir da última rodada.
+- [x] `web_server.py` ganhou um `lifespan` (liga o agendador; no fechamento, desliga agendador e pool). Ele é exportado para o app desktop da Fase 5 reaproveitar, porque sub-apps montados não rodam o próprio lifespan.
+- [x] Playwright em threads: sem mudança, já estava certo (as tarefas rodam em threads do pool, sem event loop).
+- [x] `celery` e `redis` removidos do `requirements.txt` (entrou `APScheduler==3.11.0`), stub do `celery` removido do `conftest.py`, `REDIS_URL` removido do `.env.example`.
+- [x] `Dockerfile` e `docker-compose.yml` removidos **nesta fase** (antecipado da Fase 5): sem Celery, os serviços worker/beat não funcionavam mais.
+- [x] Testes: `test_task_runner.py` (10), `test_scheduler.py` (11, incluindo `schedule_all_products`, `task_search_products` e o lifespan) e migração v1 → v2 + `AppMeta` no `test_db_client_sqlite.py`. Antes, com o Celery virando `MagicMock` no `conftest`, as tasks nunca eram exercitadas de verdade. Total: 172 testes passando.
+- [x] Avisos de loja bloqueada voltaram a aparecer no `GET /search/{id}`.
 
-**Pronto quando:** sem Docker, `POST /monitor/add` grava o preço, `POST /search` + `GET /search/{id}` devolvem resultados, e o job de 6h aparece no log.
+**Validação real** (uvicorn em `127.0.0.1`, sem Celery/Redis importados):
+- `POST /search` respondeu em 0,01 s; a busca rodou na thread `mv-task_0` e o `GET /search/{id}` trouxe `store_warnings = {"mercadolivre": "login_wall"}`. As duas lojas bloquearam nessa rodada (Amazon 503, ML login wall), então não vieram resultados; com as lojas liberadas, a gravação de resultados já tinha sido validada na Fase 2.
+- `POST /monitor/add` respondeu em 0,03 s com `task_id`, o produto apareceu em `/products` e a checagem rodou em background, gravando no SQLite.
+- Log: `Agendador iniciado ... próxima checagem completa=<agora + 1 min>` → `Checagem completa disparada`. Depois de reiniciar, a próxima ficou em última + 6h e os dados continuaram lá.
+
+**Pronto quando:** sem Docker, `POST /monitor/add` grava o preço, `POST /search` + `GET /search/{id}` devolvem resultados, e o job de 6h aparece no log. ✅
 
 ---
-
 ### Fase 5: App único (backend + frontend num processo)
 
 **Objetivo:** `python main.py` abre o app completo no navegador.
 
 - [ ] `execution/desktop_app.py`:
-  - `root = FastAPI(lifespan=...)`. O lifespan liga e desliga o agendador e o `task_runner`.
+  - `root = FastAPI(lifespan=web_server.lifespan)`: reaproveita o lifespan da Fase 4 (agendador + `task_runner`).
   - `root.mount("/api", web_server.app)`: rotas atuais intactas.
   - SPA: servir `web_dist/` e, para qualquer caminho que não seja arquivo, devolver `index.html` (o `StaticFiles(html=True)` sozinho não faz esse fallback, então `/products` daria 404 num F5).
 - [ ] `main.py` (raiz):
@@ -207,7 +214,7 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
   - `webbrowser.open(...)` assim que o health check responder (em vez de esperar um tempo fixo).
   - Logs em arquivo rotativo em `DATA_DIR/logs/` (no `.exe` com `--noconsole` não existe terminal).
 - [ ] Script `pnpm build:desktop` (ou passo no build) que gera `apps/web/dist` e copia para onde o `desktop_app` espera.
-- [ ] Remover `Dockerfile` e `docker-compose.yml` da branch `exe`.
+- [x] Remover `Dockerfile` e `docker-compose.yml` da branch `exe` (feito na Fase 4).
 
 **Pronto quando:** numa máquina com Python, mas **sem Docker/Postgres/Redis rodando**, `python main.py` abre o navegador, e dá para adicionar produto, ver histórico, buscar, pausar, renomear, remover e dar F5 em `/products` e `/search`.
 
@@ -307,13 +314,16 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - `CLAUDE.md`, `AGENTS.md`, `docs/architecture.md`, `docs/stack.md`, `docs/flows.md`: sem Docker/Celery/Redis/Prisma.
 - Diretivas `01_database_prisma.md` (→ SQLite), `03_task_queue_and_scheduler.md` (→ threads/APScheduler), `05_caching_rules.md` (→ memória).
 
+**Já atualizados (F2–F4):** `CLAUDE.md`, `AGENTS.md`, `execution/README.md`, `docs/stack.md`, `docs/conventions.md`, diretivas 01, 03 e 05.
+**Ainda desatualizados (revisão final de docs, junto com o `README-EXE.md`):** `docs/architecture.md`, `docs/flows.md`, `docs/ci.md`, diretivas `06_vision_project.md` e `07_automatic_search.md`, `.agents/workflows/arquitetura.md`, `execution/scrapers/README.md` (Chromium no Docker). O `README.md` raiz **não é alterado**: continua descrevendo a versão servidor.
+
 ## 9. Checklist geral
 
 - [x] F0 Preparação da branch
 - [ ] F1 `settings.py` e pasta de dados (parcial: `DATA_DIR`/`DB_PATH`/config prontos)
 - [x] F2 `db_client.py` em SQLite + `models.py` + testes reais
 - [x] F3 Cache e status de busca em memória (remoção do pacote `redis` fica para a F4)
-- [ ] F4 `task_runner.py` + APScheduler com recuperação na abertura
+- [x] F4 `task_runner.py` + APScheduler com recuperação na abertura
 - [ ] F5 `desktop_app.py` + `main.py`, validado sem Docker
 - [ ] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional
 - [ ] F7 PyInstaller `--onedir`, testado na Windows Sandbox

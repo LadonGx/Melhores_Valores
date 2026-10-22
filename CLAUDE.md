@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ├── apps/web/          # React + Vite + TypeScript frontend
 ├── packages/types/    # Shared TypeScript types (@mv/types)
 ├── packages/utils/    # Shared utilities (@mv/utils)
-├── execution/         # Python backend (FastAPI + Celery)
+├── execution/         # Python backend (FastAPI, SQLite, background threads)
 ├── pnpm-workspace.yaml
 └── package.json       # Workspace root
 ```
@@ -32,21 +32,12 @@ pnpm dev
 pnpm build
 ```
 
-### Docker (primary workflow — backend)
-```bash
-docker-compose up -d          # Start all services (db, redis, api, worker, beat)
-docker-compose logs -f api    # Tail API logs
-docker-compose logs -f worker # Tail Celery worker logs
-docker-compose down           # Stop all services
-```
-
-### Local Python (without Docker)
+### Backend (single process — no Docker, Redis or Celery)
 ```bash
 pip install -r requirements.txt
-uvicorn execution.web_server:app --host 0.0.0.0 --port 8000 --reload
-celery -A execution.worker_tasks worker --loglevel=info
-celery -A execution.worker_tasks beat --loglevel=info
+uvicorn execution.web_server:app --host 127.0.0.1 --port 8000 --reload
 ```
+One process runs everything: the API, background tasks (`task_runner`, 2 threads) and the 6h scheduler (`scheduler`, started by the `lifespan` in `web_server.py`).
 
 ### Database
 SQLite file created automatically on first access, in the user data dir
@@ -54,7 +45,7 @@ SQLite file created automatically on first access, in the user data dir
 Schema changes: append a new entry to `MIGRATIONS` in `execution/db_schema.py` (versioned by `PRAGMA user_version`).
 
 > Branch `exe` is migrating to a single-process desktop app — see `docs/plano-executavel.md`.
-> Done: SQLite (Phase 2), in-memory cache (Phase 3). Still pending: Celery → threads/APScheduler, packaging.
+> Done: SQLite (Phase 2), in-memory cache (Phase 3), threads + APScheduler (Phase 4). Still pending: single entry point serving the frontend (Phase 5), packaging.
 
 ## Architecture
 
@@ -64,17 +55,18 @@ The system follows a **3-layer architecture** (documented in `.agents/workflows/
 2. **Orchestrators** (`execution/*_orchestrator.py`, `execution/worker_tasks.py`) — Decision logic that coordinates execution
 3. **Execution** (`execution/`) — Deterministic, focused modules (scrapers, adapters, cache, db)
 
-### Services (docker-compose, legacy until Phase 5 of the exe plan)
-- **redis**: Redis 7 (port 6379) — Celery broker only (cache is in memory since Phase 3)
-- **api**: FastAPI on port 8000
-- **worker**: Celery worker (2 concurrent tasks)
-- **beat**: Celery Beat — triggers `schedule_all_products()` every 6 hours
+### Runtime (one process)
+- **API**: FastAPI (`web_server.py`), bound to `127.0.0.1`
+- **Background tasks**: `task_runner.py` — thread pool (2 workers) with a Celery-like `@task` / `.delay()` / `self.request.id` interface
+- **Scheduler**: `scheduler.py` — APScheduler runs `schedule_all_products()` every 6h, anchored to the last full check stored in `AppMeta` (catch-up 1 min after start if overdue)
+- **Cache**: in-memory `memory_cache` (`cache_manager.py`)
+- **DB**: SQLite file in the user data dir
 
 ### Request Flow: Price Tracking
 
 ```
 POST /monitor/add {"url": "..."} 
-  → detect store → enqueue Celery task
+  → detect store → enqueue background task (task_runner)
   → Worker: check in-memory cache (2h TTL)
   → Cache miss: 3-level scraping cascade:
       1. httpx (fast, free)
@@ -101,7 +93,9 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 | File | Purpose |
 |------|---------|
 | `execution/web_server.py` | FastAPI app — 4 endpoints (health, monitor, history, search) |
-| `execution/worker_tasks.py` | Celery app config + all task definitions |
+| `execution/worker_tasks.py` | Price pipeline + all task definitions (`@task`) |
+| `execution/task_runner.py` | Thread-pool task queue (replaces Celery worker) |
+| `execution/scheduler.py` | APScheduler 6h full check + catch-up (replaces Celery Beat) |
 | `execution/db_client.py` | **Only** place DB is accessed — SQLite (`sqlite3`) CRUD operations |
 | `execution/db_schema.py` | DB schema + migrations: `Product`, `PriceHistory`, `SearchResult` |
 | `execution/models.py` | Pydantic models returned by `db_client` (same field names the Prisma models had) |
@@ -126,7 +120,6 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 
 In `.env` (repo, dev) or `config.env` (user data dir):
 ```
-REDIS_URL="redis://localhost:6379/0"
 FIRECRAWL_API_KEY="..."   # optional — without it, cascade level 3 is skipped
 MV_DATA_DIR="./.data"     # optional — overrides the user data dir
 ```

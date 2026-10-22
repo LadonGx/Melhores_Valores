@@ -18,9 +18,9 @@
 | Layer | Technology |
 |---|---|
 | Frontend | React 18, TypeScript, Vite, React Query v5, React Router v6, Zustand, Axios, CSS Modules |
-| Backend | Python 3.11+, FastAPI, Celery (Redis 7 as broker), SQLite (`sqlite3`, sync), in-memory cache |
+| Backend | Python 3.11+, FastAPI, SQLite (`sqlite3`, sync), in-memory cache, thread-pool tasks + APScheduler — all in one process |
 | Scraping | httpx, Playwright/Chromium, Firecrawl API |
-| Infra | Docker Compose (redis, api, worker, beat) — legacy; branch `exe` is becoming a desktop executable (`docs/plano-executavel.md`) |
+| Infra | None (no Docker/Redis/Celery). Branch `exe` is becoming a desktop executable (`docs/plano-executavel.md`) |
 | Monorepo | pnpm workspaces: `apps/web`, `packages/types`, `packages/utils` |
 
 ---
@@ -42,7 +42,9 @@ Execution (execution/)           ← Deterministic modules (scrapers, adapters, 
 ```
 execution/
   web_server.py          ← FastAPI routes (port 8000)
-  worker_tasks.py        ← Celery tasks + Beat schedule
+  worker_tasks.py        ← Price pipeline + background tasks (@task)
+  task_runner.py         ← Thread-pool task queue (.delay(), self.request.id)
+  scheduler.py           ← APScheduler: full check every 6h + catch-up on start
   db_client.py           ← ONLY DB access point (SQLite, sync)
   db_schema.py           ← SQLite schema + migrations (PRAGMA user_version)
   models.py              ← Pydantic models returned by db_client
@@ -88,12 +90,12 @@ apps/web/src/
 ## Code Conventions
 
 ### Python (execution/)
-- Functions are synchronous unless it's a Celery task (`@app.task`)
+- Everything is synchronous; background work is a `@task` from `task_runner.py`, enqueued with `.delay()`
 - All DB calls go through functions in `db_client.py`
 - Scraping functions return `dict | None`
 - Adapters receive raw HTML string, return `{"name": str, "price": float | None, "image_url": str | None}`
 - Store names are lowercase strings: `"amazon"`, `"mercadolivre"`
-- Logging via standard `logging` module; tasks use Celery logger
+- Logging via standard `logging` module (task failures are logged by `task_runner`)
 - No print statements in production code
 
 ### TypeScript (apps/web/)
@@ -109,7 +111,7 @@ apps/web/src/
 - Python: `snake_case` for functions/vars, `PascalCase` for classes
 - TypeScript: `camelCase` for vars/functions, `PascalCase` for types/components
 - CSS class names: camelCase in CSS Modules
-- Celery task names: `task_<action>_<resource>` (e.g., `task_search_products`)
+- Background task names: `task_<action>_<resource>` (e.g., `task_search_products`)
 - React Query keys: defined as objects in hooks (e.g., `productKeys.all`)
 
 ---
@@ -121,7 +123,7 @@ apps/web/src/
 3. **No SQL outside `db_client.py`.**
 4. **No Firecrawl calls outside `firecrawl_api.py`.**
 5. **Mutations invalidate React Query cache** — always call `queryClient.invalidateQueries` on success.
-6. **Celery tasks are idempotent** — re-running a task must not corrupt data.
+6. **Background tasks are idempotent** — re-running a task must not corrupt data (queued tasks are dropped when the app closes).
 7. **Cache TTL is 2 hours** — do not hardcode different values elsewhere.
 8. **Product URLs are normalized** (fragment stripped) before storage or cache lookup.
 9. **Prices are stored as floats** in DB; displayed as BRL currency in UI.
@@ -151,21 +153,20 @@ apps/web/src/
 These changes are **safe** without broader review:
 - Adding new fields to `packages/types/src/index.ts` (non-breaking additions)
 - Adding new CSS rules to existing `.module.css` files
-- Adding new Celery tasks that don't touch DB schema
+- Adding new `@task` background tasks that don't touch DB schema
 - Adding new adapter functions in existing adapter files
 - Adding new React Query hooks in `features/*/hooks/`
 
 These changes **require explicit confirmation**:
 - Modifying the DB schema (append a new migration to `execution/db_schema.py`; never edit a released one)
 - Changing `db_client.py` function signatures
-- Changing `worker_tasks.py` task names (breaks in-flight tasks)
+- Changing the 6h interval or catch-up rule in `scheduler.py`
 - Modifying `cache_manager.py` key format (invalidates all cached data)
 - Changing CORS origins in `web_server.py`
 - Upgrading major dependencies
 
 These folders/files are **never modified without explicit user instruction**:
 - `.env` (secrets)
-- `docker-compose.yml`
 - `execution/db_schema.py` released migrations
 - `pnpm-workspace.yaml`
 
@@ -180,7 +181,7 @@ These folders/files are **never modified without explicit user instruction**:
 - [ ] If adding API call in frontend: am I using `services/`?
 - [ ] If adding server state: am I using React Query (not Zustand)?
 - [ ] Does this change require a new migration in `db_schema.py`?
-- [ ] Does this change break existing Celery task names?
+- [ ] Does this change block the event loop? (scraping/Playwright must run in a `@task` or `asyncio.to_thread`)
 
 ---
 

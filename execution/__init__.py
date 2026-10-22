@@ -1,1 +1,1 @@
-"""Pacote de execução: scraping, cache, banco de dados e workers Celery."""
+"""Pacote de execução: scraping, cache, banco de dados e fila de tarefas em threads."""

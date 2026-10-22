@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Literal
 from urllib.parse import urlparse, urlunparse
 
@@ -13,6 +14,7 @@ from .db_client import (
     get_product_by_id, get_products_with_history,
     get_search_results, update_product_name, update_product_status,
 )
+from . import scheduler, task_runner
 from .search_status import get_search_warnings
 from .store_detection import detect_store_from_url
 from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
@@ -23,7 +25,19 @@ def _normalize_url(url: str) -> str:
     parsed = urlparse(url.strip())
     return urlunparse(parsed._replace(fragment=""))
 
-app = FastAPI(title="Rastreador de Preços - API")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Liga o agendador na subida e encerra agendador + fila de tarefas no fechamento.
+    Exportado para o app desktop reaproveitar (sub-apps montados não rodam lifespan)."""
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown()
+        task_runner.shutdown()
+
+
+app = FastAPI(title="Rastreador de Preços - API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -152,7 +166,7 @@ async def remove_product(product_id: str):
 async def refresh_product_price(product_id: str):
     """
     Força um novo scraping imediato para um produto específico.
-    Ignora o cache Redis e aguarda o resultado de forma síncrona.
+    Ignora o cache e aguarda o resultado de forma síncrona.
     Retorna o novo preço ou um erro descritivo.
     """
     product = get_product_by_id(product_id)
@@ -345,7 +359,7 @@ async def get_product_history(
 def search_products(request: SearchRequest):
     """
     Recebe o nome do produto e dispara a busca assíncrona nas 3 lojas.
-    Retorna imediatamente com o task_id — a busca roda em background no Celery.
+    Retorna imediatamente com o task_id — a busca roda em background (task_runner).
 
     Body: {"query": "iPhone 15 128GB", "min_price": 20, "max_price": 500}
     """

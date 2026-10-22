@@ -14,16 +14,18 @@ def parse_product(html: str) -> dict | None:
 # DB client: all functions are synchronous
 def get_product_by_id(product_id: str) -> dict | None: ...
 
-# Celery task: decorated, always return value or raise
-@app.task(bind=True)
-def process_price_check(self, url: str) -> dict: ...
+# Background task (execution/task_runner.py): decorated, always return value or raise
+@task
+def process_price_check(url: str, store: str) -> dict: ...
+
+process_price_check.delay(url, store)  # runs in the thread pool, returns TaskHandle(id, future)
 ```
 
 ### Error Handling
 - Scrapers return `None` on failure (never raise to caller)
 - Adapters return `None` if price/name can't be parsed
 - DB functions may raise — callers handle exceptions
-- Celery tasks log exceptions and return error dict, never re-raise
+- Background tasks log exceptions and return error dict, never re-raise
 
 ### Logging
 ```python
@@ -133,11 +135,10 @@ refactor: extract price formatting to @mv/utils
 
 ## Environment Variables
 
-Required in root `.env`:
+Optional, in root `.env` (dev) or `config.env` in the user data dir:
 ```
-DATABASE_URL="postgresql://user:password@localhost:5432/price_tracker"
-REDIS_URL="redis://localhost:6379/0"
-FIRECRAWL_API_KEY="fc-..."
+FIRECRAWL_API_KEY="fc-..."   # without it, cascade level 3 is skipped
+MV_DATA_DIR="./.data"        # overrides the user data dir (SQLite file)
 ```
 
 Optional in `apps/web/.env`:

@@ -1,11 +1,6 @@
 import logging
-import os
 from typing import Any
 from urllib.parse import urlparse, urlunparse
-
-from celery import Celery
-from celery.schedules import crontab
-from dotenv import load_dotenv
 
 from .adapters import normalize_store, parse_product_data
 from .cache_manager import get_cached_price, set_cached_price
@@ -18,14 +13,9 @@ from .db_client import (
 )
 from .scraping_orchestrator import scrape_product
 from .search_orchestrator import run_product_search
-
-load_dotenv()
+from .task_runner import task
 
 logger = logging.getLogger(__name__)
-
-# Configuração do Worker Celery
-app = Celery("tasks", broker=os.getenv("REDIS_URL", "redis://localhost:6379/1"))
-
 
 def _build_success_payload(
     *,
@@ -85,10 +75,10 @@ def run_price_pipeline(
     fallback_image: str | None = None,
     skip_cache: bool = False,
 ) -> dict[str, Any]:
-    """Pipeline principal com integração real (Redis, Firecrawl e PostgreSQL).
+    """Pipeline principal: cache em memória → cascata de scraping → SQLite.
 
     Args:
-        skip_cache: Se True, ignora o cache Redis e força um novo scraping.
+        skip_cache: Se True, ignora o cache e força um novo scraping.
                     Deve ser True em refreshes manuais para garantir dados frescos.
     """
     if not url or not isinstance(url, str):
@@ -225,7 +215,7 @@ def run_price_pipeline(
     )
 
 
-@app.task
+@task
 def process_price_check(
     url: str,
     store: str,
@@ -245,7 +235,7 @@ def process_price_check(
         }
 
 
-@app.task
+@task
 def schedule_all_products() -> dict[str, Any]:
     """Reenfileira todos os produtos cadastrados para nova checagem."""
     products = get_all_products()
@@ -268,19 +258,14 @@ def schedule_all_products() -> dict[str, Any]:
     }
 
 
-app.conf.beat_schedule = {
-    "schedule-all-products-every-6-hours": {
-        "task": "execution.worker_tasks.schedule_all_products",
-        "schedule": crontab(minute=0, hour="*/6"),
-    }
-}
+# O agendamento a cada 6h (antigo Celery Beat) fica em scheduler.py.
 
 
 # ─────────────────────────────────────────────
 # Task: Busca de produto por nome
 # ─────────────────────────────────────────────
 
-@app.task(bind=True, name="search_products")
+@task(bind=True)
 def task_search_products(
     self,
     query: str,
@@ -288,7 +273,7 @@ def task_search_products(
     max_price: float | None = None,
 ) -> str:
     """
-    Task Celery assíncrona que executa a busca de produtos por nome.
+    Tarefa em background que executa a busca de produtos por nome.
     Usa o próprio task.id como search_id para que o frontend consiga
     consultar os resultados via GET /search/{task_id}.
 

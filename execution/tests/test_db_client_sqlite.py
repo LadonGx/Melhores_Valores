@@ -294,6 +294,49 @@ class TestSearchResults:
         assert db_client.get_search_results("nao-existe") == []
 
 
+class TestMigrations:
+    def test_v1_database_is_upgraded_keeping_data(self, tmp_path):
+        """Banco criado por uma versão antiga do app (só a v1) recebe a v2 ao abrir."""
+        db_client.close_db()
+        path = tmp_path / "old.db"
+        conn = sqlite3.connect(path)
+        conn.executescript(f"BEGIN;\n{MIGRATIONS[0]}\nPRAGMA user_version = 1;\nCOMMIT;")
+        conn.execute(
+            "INSERT INTO Product (id, url, store, createdAt, updatedAt) VALUES ('p1', 'https://old', 'amazon', ?, ?)",
+            ("2026-01-01T00:00:00.000000+00:00", "2026-01-01T00:00:00.000000+00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(db_client, "DB_PATH", path)
+            upgraded = db_client.connect_db()
+            assert upgraded.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
+            assert db_client.get_product_by_id("p1").url == "https://old"
+            assert db_client.get_last_full_check() is None
+            db_client.close_db()
+
+
+class TestAppMeta:
+    def test_last_full_check_round_trip_and_upsert(self):
+        assert db_client.get_last_full_check() is None
+
+        first = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
+        db_client.set_last_full_check(first)
+        assert db_client.get_last_full_check() == first
+
+        later = first + timedelta(hours=6)
+        db_client.set_last_full_check(later)
+        assert db_client.get_last_full_check() == later
+
+    def test_last_full_check_is_stored_in_utc(self):
+        brt = timezone(timedelta(hours=-3))
+        db_client.set_last_full_check(datetime(2026, 10, 21, 6, 0, tzinfo=brt))
+        stored = db_client.get_last_full_check()
+        assert stored == datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
+        assert stored.utcoffset() == timedelta(0)
+
+
 class TestConcurrency:
     def test_concurrent_writers_from_threads(self):
         errors: list[Exception] = []

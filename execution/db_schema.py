@@ -48,4 +48,12 @@ MIGRATIONS: list[str] = [
     CREATE INDEX SearchResult_search_id_idx ON SearchResult(search_id);
     CREATE INDEX SearchResult_query_store_idx ON SearchResult(query, store);
     """,
+    # v2: estado interno do app (ex: horário da última checagem completa,
+    # usado pelo agendador para recuperar rodadas perdidas com o app fechado)
+    """
+    CREATE TABLE AppMeta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """,
 ]

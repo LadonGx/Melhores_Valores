@@ -167,7 +167,7 @@ def run_product_search(
                    known price are discarded when this is set.
         max_price: Optional upper price bound (inclusive). Results without a
                    known price are discarded when this is set.
-        search_id: External ID to use (e.g. Celery task ID). Generates UUID if None.
+        search_id: External ID to use (e.g. the task_runner task ID). Generates UUID if None.
 
     Returns:
         search_id used for persistence — poll via GET /search/{search_id}.

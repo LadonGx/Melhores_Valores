@@ -1,11 +1,11 @@
 # execution/ — Python Backend
 
 ## Objective
-Houses the entire Python backend: FastAPI server, Celery workers, database client, scraping engine, and all integrations.
+Houses the entire Python backend in a single process: FastAPI server, background task threads, scheduler, database client, scraping engine, and all integrations.
 
 ## Responsibilities
 - Expose REST API endpoints (FastAPI)
-- Run async scraping tasks (Celery)
+- Run background scraping tasks (thread pool, `task_runner.py`) and the 6h schedule (`scheduler.py`)
 - Store/retrieve data (SQLite, local file in the user data dir)
 - Cache prices (in memory, per process)
 - Coordinate multi-level scraping cascade
@@ -16,7 +16,9 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 | File | Role | Modify when |
 |---|---|---|
 | `web_server.py` | FastAPI routes | Adding/changing API endpoints |
-| `worker_tasks.py` | Celery tasks + Beat schedule | Adding async tasks or changing schedule |
+| `worker_tasks.py` | Price pipeline + `@task` definitions | Adding background tasks |
+| `task_runner.py` | Thread-pool queue (`.delay()`) | Changing concurrency/queue behavior |
+| `scheduler.py` | APScheduler 6h check + catch-up | Changing the schedule |
 | `db_client.py` | **ONLY DB access point** | Adding DB operations |
 | `db_schema.py` | SQLite schema + migrations | Changing tables/indexes (append a migration) |
 | `models.py` | Pydantic models returned by `db_client` | Adding/removing DB fields |
@@ -45,7 +47,6 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 
 ```
 MV_DATA_DIR   → (optional) overrides the user data dir where the SQLite file lives
-REDIS_URL     → Redis connection string (Celery broker only, until Phase 4)
 FIRECRAWL_API_KEY → Paid API key (Firecrawl)
 ```
 
@@ -90,8 +91,8 @@ search_orchestrator.py
 
 | Task | Trigger | Description |
 |---|---|---|
-| `process_price_check(url)` | On demand + Beat | Cache check → cascade scrape → DB write |
-| `schedule_all_products()` | Every 6 hours (Beat) | Re-queues all monitored products |
+| `process_price_check(url)` | On demand + scheduler | Cache check → cascade scrape → DB write |
+| `schedule_all_products()` | Every 6 hours (`scheduler.py`, anchored to last run in `AppMeta`) | Re-queues all active products |
 | `task_search_products(query)` | On demand | Parallel search → filter → DB write |
 
 ## db_client.py — Function Reference
@@ -114,7 +115,7 @@ search_orchestrator.py
 
 ## Risks
 
-- Changing `worker_tasks.py` task function names breaks in-flight Celery tasks.
+- Calling scraping (httpx/Playwright) directly inside an `async def` route blocks the event loop — use a `@task` or `asyncio.to_thread`.
 - Changing `cache_manager.py` key format invalidates all cached prices.
 - Changing `db_client.py` function signatures breaks all callers.
 - Opening `sqlite3` connections outside `db_client.py` bypasses the write lock and can cause "database is locked".

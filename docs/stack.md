@@ -6,15 +6,18 @@
 - Version: latest stable
 - Usage: REST API, request validation via Pydantic, CORS middleware
 - Entry: `execution/web_server.py`
-- Run: `uvicorn execution.web_server:app --host 0.0.0.0 --port 8000 --reload`
+- Run: `uvicorn execution.web_server:app --host 127.0.0.1 --port 8000 --reload`
+- `lifespan` starts the scheduler and stops scheduler + task pool on shutdown
 
-### Celery
-- Broker: Redis (`REDIS_URL`)
-- Backend: Redis (task results)
-- Workers: 2 concurrent (`--concurrency=2`)
-- Beat: `schedule_all_products()` every 6h (crontab)
-- Entry: `execution/worker_tasks.py` (`app = Celery(...)`)
-- Run: `celery -A execution.worker_tasks worker --loglevel=info`
+### Background tasks (`task_runner.py`) — replaces Celery worker
+- `ThreadPoolExecutor`, 2 workers (same as the old `--concurrency=2`)
+- `@task` / `@task(bind=True)` decorator: `.delay()` returns `TaskHandle(id, future)`; `self.request.id` equals the handle id
+- Failures are logged with the task id; queued tasks are dropped when the app closes
+
+### Scheduler (`scheduler.py`, APScheduler 3.11) — replaces Celery Beat
+- `BackgroundScheduler` (UTC): `run_full_check` → `schedule_all_products()` every 6h
+- Anchored to `AppMeta.last_full_check`: next run = last + 6h, or 1 min after start if overdue
+- `max_instances=1`, `coalesce=True`, `misfire_grace_time=None`
 
 ### SQLite
 - Driver: `sqlite3` (Python stdlib), sync
@@ -23,12 +26,6 @@
 - Mode: WAL, foreign keys on; one connection per thread, writes serialized by a lock
 - Models: Pydantic, `execution/models.py`  
 - Access: only through `db_client.py`
-
-### Redis 7
-- Port: 6379 (Docker)
-- Usage 1: Celery broker + results backend
-- Usage 2: ~~Price cache~~ — replaced by the in-memory `TTLCache` in `cache_manager.py` (branch `exe`, Phase 3)
-- Client: only used indirectly by Celery (kombu); no project module imports `redis`
 
 ### httpx
 - Sync HTTP client for Level 1 scraping
@@ -122,11 +119,6 @@
 
 ---
 
-## Docker Services
+## Runtime
 
-| Service | Image | Port | Role |
-|---|---|---|---|
-| redis | redis:7 | 6379 | Cache + message broker |
-| api | custom (Dockerfile) | 8000 | FastAPI REST server |
-| worker | custom | — | Celery async worker |
-| beat | custom | — | Celery scheduled tasks |
+No Docker, Redis or Celery: API, background tasks, scheduler, cache and SQLite all run in one Python process.

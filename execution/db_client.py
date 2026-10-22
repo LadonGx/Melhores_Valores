@@ -500,6 +500,35 @@ def get_last_valid_price_for_url(url: str) -> float | None:
         return None
 
 
+# ─────────────────────────────────────────────
+# AppMeta — estado interno do app
+# ─────────────────────────────────────────────
+
+_LAST_FULL_CHECK_KEY = "last_full_check"
+
+
+def get_last_full_check() -> datetime | None:
+    """Horário (UTC) da última checagem completa disparada pelo agendador, ou None."""
+    try:
+        row = connect_db().execute(
+            "SELECT value FROM AppMeta WHERE key = ?", (_LAST_FULL_CHECK_KEY,)
+        ).fetchone()
+        return datetime.fromisoformat(row["value"]) if row else None
+    except Exception as e:
+        logger.error(f"Erro ao ler a última checagem completa: {e}")
+        return None
+
+
+def set_last_full_check(when: datetime) -> None:
+    """Registra o horário da checagem completa que acabou de ser disparada."""
+    with _write() as conn:
+        conn.execute(
+            "INSERT INTO AppMeta (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (_LAST_FULL_CHECK_KEY, _iso(when)),
+        )
+
+
 def get_search_results(search_id: str) -> list:
     """
     Retorna todos os resultados de uma busca ordenados pelo menor preço.
