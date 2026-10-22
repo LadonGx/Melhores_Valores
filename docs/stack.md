@@ -32,8 +32,9 @@
 - Handles redirects, custom User-Agent headers
 - Returns raw HTML string or raises
 
-### Playwright (Python)
-- Chromium-based browser automation for Level 2 scraping
+### Playwright (Python) 1.64.0
+- Browser automation for Level 2 scraping (and the Amazon search fallback), using the system Edge/Chrome (`playwright_scraper._BROWSER_CANDIDATES`); Playwright's own Chromium is the last resort
+- 1.44 was too old for current Edge (intermittent launch failures) — keep Playwright reasonably recent
 - Used for JS-heavy pages (all MercadoLivre)
 - Runs in headless mode
 

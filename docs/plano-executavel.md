@@ -255,14 +255,52 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
   - Grava num SQLite **novo** (padrão `.data/copia-web/`, que está no `.gitignore`). Se o arquivo já existir, aborta antes até de ler o Postgres. A gravação é via `db_client.bulk_import` (nova função; recusa banco que já tenha dados) numa transação única, tudo ou nada.
   - Preserva ids e datas. Os timestamps do Prisma (sem fuso, em UTC) são marcados como UTC: sem isso, iriam para o SQLite deslocados em -3h.
   - `--with-search-results` (opcional), `--dry-run` (só conta). `psycopg[binary]` entrou só no `requirements-dev.txt`; não vai para o executável.
-  - **Cópia real ainda não executada:** o container `price_tracker_db` (volume `melhores_valores_postgres_data`) estava parado, e não foi ligado sem a sua confirmação.
+  - **Cópia real feita** (com o container ligado por você): 21 produtos, 705 registros de histórico e 277 resultados de busca em `.data/copia-web/`. As contagens e o último `scrapedAt` conferem exatamente com o Postgres, sem deslocamento de fuso. Esta cópia fica intacta; os testes manuais usam uma cópia dela.
 - [x] Testes: escolha do navegador (6 casos: Edge, fallback para Chrome, para Chromium, nenhum, navegador que some), `settings` no modo executável (4), `bulk_import`/`is_empty` (3) e o script de cópia (10: só leitura, destino existente, fuso, dry-run, Postgres fora do ar). Total: 234.
 
 **Validação real** (Firecrawl desligado):
 - Página de busca da Amazon pelo nível 2: abriu com o **Microsoft Edge** (detectado na 1ª chamada), 1,7 MB de HTML com resultados em 6 s. Pelo `httpx` (nível 1) essa mesma página devolvia 503.
 - Produto da Amazon extraído pelo nível 2 com o Edge: nome, R$ 66,41, em estoque, confiança 0,92, em 12 s.
 
-> **Achado para depois:** a busca por nome da Amazon (`search_scrapers/amazon_search.py`) usa só `httpx` e vem recebendo 503, enquanto o Edge abre a mesma página. Um fallback para o nível 2 na busca da Amazon (como a do Mercado Livre já faz) provavelmente devolve resultados. É mudança de regra de scraping, que também vale para a versão web, por isso não entrou aqui.
+**Comparativo httpx × Edge × Chrome × Chromium do Playwright** (o jeito anterior à F6), com os produtos reais copiados da versão web. 8 produtos (4 Amazon, 4 Mercado Livre) e 2 páginas de busca, 3 rodadas intercaladas (a ordem dos métodos gira para ninguém ter vantagem), pausa de 2–4 s entre requisições, Firecrawl desligado, worker da versão web desligado:
+
+| | httpx (nível 1) | Edge | Chrome | Chromium (anterior) |
+| --- | --- | --- | --- | --- |
+| Produtos Amazon (preço extraído) | 10/12 (2 falhas de parse) | **12/12** | **12/12** | 11/12 |
+| Busca Amazon (60 resultados por rodada) | 1/3 | **3/3** | **3/3** | 1/3 (bloqueado a partir da 2ª rodada) |
+| Produtos Mercado Livre | 0/12 (`login_wall`) | 0/12 (`login_wall`) | 0/12 (`login_wall`) | 0/12 (`login_wall`) |
+| Busca Mercado Livre | 0/3 | 0/3 | 0/3 | 0/3 |
+| Tempo (mediana, produto) | 0,8 s | 11,9 s | 11,8 s | 12,5 s |
+
+Conclusões:
+- **O Edge (e o Chrome) foram melhores que o Chromium do Playwright**, e não o contrário. Na página mais vigiada, a busca da Amazon, o Chromium foi bloqueado depois da 1ª rodada, enquanto Edge e Chrome passaram nas 3. O bloqueio olha a "cara de robô" do navegador e o IP/ritmo, não a marca. O Chromium que vem com o Playwright é o mais fácil de identificar como automação.
+- **Usar o Chromium como alternativa "se o Edge for bloqueado" não ajudaria:** mesmo IP, navegador mais detectável. Por isso a ordem Edge → Chrome → Chromium fica como está. O Chromium continua só como reserva para **máquina sem Edge/Chrome** (ou Edge que não abre), não para contornar bloqueio. Não vale implementar troca automática de navegador ao detectar bloqueio: dobraria o tráfego sem chance real de passar.
+- **O nível 1 (`httpx`) continua valendo a pena:** resolve a maioria dos produtos da Amazon em 0,8 s, contra ~12 s de um navegador, e o Edge cobre as falhas.
+- **Mercado Livre:** bloqueado (`login_wall`) para todos os métodos, inclusive o `httpx`. É bloqueio por sessão/IP, e trocar de navegador não resolve. Na cascata o Firecrawl é pulado nesse caso, como já era. Contornar exigiria sessão logada do usuário, fora do escopo.
+- A única divergência de preço (Ogros-Deuses: 103,66 × 79,90 só na 1ª rodada) não tem relação com o navegador: o histórico da versão web também alterna entre esses dois valores. A Amazon mostra ofertas diferentes para esse item (seletores diferentes, confiança 0,96 × 0,92). É um ponto do adapter da Amazon, que já existe na versão web.
+- Possível reforço futuro (não testado): o scraper fixa o user-agent em "Chrome 124", mas o Edge do sistema é bem mais novo. Essa diferença entre o user-agent e os client hints é um sinal que alguns anti-bots usam. Com navegador do sistema, não fixar o user-agent deixaria a assinatura coerente.
+
+**Teste manual no app com os dados copiados** (`.data/teste-manual`, cópia da cópia; Firecrawl desligado):
+- 21 produtos, 2 promoções, modal de detalhes com estatísticas e gráfico de 30 dias, tudo do SQLite copiado.
+- A checagem de recuperação (1 min após abrir) enfileirou os 20 ativos: 12/12 da Amazon com preço (11 pelo nível 1; **o Echo Dot 5ª geração falhou no nível 1 e foi capturado pelo Edge no nível 2, R$ 649,00**) e 8/8 do Mercado Livre com `login_wall` no Edge, Firecrawl pulado.
+- "Atualizar preço" pela lista (`POST /api/product/{id}/refresh`) → 200, R$ 638,99. O modal de detalhes **não** tem botão de atualizar (relevante para o botão pedido para o final).
+
+**Busca da Amazon com fallback para o nível 2** (feito só na `exe`, a pedido): `search_amazon` tenta o `httpx` e, se não vier **nenhum card** (erro, 503 ou página de verificação com status 200), abre a mesma URL com `fetch_html_playwright` (Edge/Chrome), esperando o seletor dos cards. O parser dos cards foi separado (`_parse_results`) e serve aos dois níveis. 6 testes novos: 503 → navegador, página sem cards → navegador, navegador não é usado quando o `httpx` funciona, navegador sem cards → `[]`, `max_results` no nível 2, falha total → `[]`.
+- Real: "echo dot", "o caminho dos reis" e "mouse logitech m170" voltaram com 10/10/6 resultados, todos pelo nível 2 (de 6 a 11 s). No app, pela interface: `httpx` com 503 → Edge → 10 resultados da Amazon em 5 s, listados por preço junto com o aviso de bloqueio do Mercado Livre.
+
+**Achado importante: o Playwright 1.44 do projeto está velho demais para os navegadores atuais.**
+- No dia seguinte ao comparativo, o Edge 155 passou a fechar **0,03 s depois de aberto pelo Playwright 1.44** (5 de 5 vezes no terminal, código de saída 0), até com janela visível. O Edge abre normalmente fora do Playwright. O Chrome 155 continuou funcionando, e minutos depois o Edge voltou a abrir dentro do app. Ou seja: falha **intermitente**, de compatibilidade (o 1.44 é de maio/2024 e suporta oficialmente o Chromium 125).
+- Num ambiente Python separado, com o **Playwright 1.64.0**, o mesmo Edge 155 abriu 3 de 3 vezes, em ~2 s (o 1.44 levava ~6 s para abrir a busca).
+- Por que importa: muitos testadores Windows só têm o Edge. Com o 1.44, o nível 2 pode simplesmente não funcionar para eles, e o executável não teria como se recuperar.
+- **Feito: Playwright atualizado para 1.64.0** (só no `requirements.txt` da `exe`; a versão web usa o Dockerfile da `main` e não muda). `pip check` sem conflitos (vieram junto `greenlet` 3.5.6 e `pyee` 14), código sem mudança de API, 239 testes passando. Validação real com o 1.64:
+  - Edge aberto e fechado 10 vezes pelo mesmo caminho do app (`_launch`): **10/10**, 0,8 s em média (com o 1.44: 0/5 nessa mesma manhã).
+  - Produtos reais pelo nível 2 com detecção automática: 4/4 da Amazon com preço pelo **Edge**; Mercado Livre `login_wall`, como antes.
+  - Busca da Amazon: "echo dot" pelo `httpx` (1,7 s); "o caminho dos reis" e "x-men exterminio" levaram 503 no `httpx` e vieram pelo Edge (10 resultados cada, ~6 s).
+  - No app, pela interface: busca "x-men exterminio" → Edge → 10 resultados (o sem preço no fim). **Monitorar** num resultado → produto cadastrado com o preço da busca (R$ 26,90) → a checagem em background confirmou R$ 26,90 pelo Edge no nível 2, sem duplicar o registro.
+  - Atenção (só em dev): o Chromium do próprio Playwright, a última reserva, precisa ser baixado de novo para o 1.64 (`playwright install chromium`; o que está instalado é o do 1.44). Não baixei. O executável não usa esse Chromium (Edge/Chrome do sistema), então isso só importa para quem desenvolve numa máquina sem Edge e sem Chrome.
+- Proteção já aplicada: sem navegador nenhum, o nível 2 não fica mais desligado até reiniciar o app; tenta detectar de novo depois de 10 min (`RETRY_DETECTION_AFTER`), com teste.
+
+> **Achado para depois (UX):** a fila tem 2 threads e é compartilhada. Quando a checagem automática enfileira os 20 produtos (ex: 1 min depois de abrir, se a última foi há mais de 6 h), uma busca feita pelo usuário espera atrás deles, e no Mercado Livre bloqueado cada item leva ~30 s. Vale dar prioridade às ações do usuário (busca, adicionar produto, o botão de checar de novo) com uma fila separada ou com prioridade. Entra junto com o botão da F8.
 
 **Pronto quando:** com Edge, sem Chromium do Playwright e sem chave do Firecrawl, um produto que exige JS (nível 2) é capturado. ✅
 
@@ -362,7 +400,7 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - [x] F3 Cache e status de busca em memória (remoção do pacote `redis` fica para a F4)
 - [x] F4 `task_runner.py` + APScheduler com recuperação na abertura
 - [x] F5 `desktop_app.py` + `main.py`, validado sem Docker
-- [x] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura; cópia real pendente)
+- [x] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura; cópia feita), comparativo de navegadores
 - [ ] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev, testado na Windows Sandbox
 - [ ] F8 Botão para checar o preço de novo nos itens, workflow multiplataforma + GitHub Release + `README-EXE.md` (novo, o `README.md` atual fica)
 - [ ] F9 Atualizações, bandeja (opcional), configurações

@@ -239,6 +239,29 @@ class TestBrowserSelection:
         assert playwright_scraper.browser_in_use() is None
         assert "nenhum navegador disponível" in caplog.text
 
+    def test_detection_is_retried_after_cooldown(self):
+        """Falha passageira (ex: Edge atualizando) não desliga o nível 2 até reiniciar o app."""
+        state = {"edge": False}
+
+        def side_effect(kwargs, browser):
+            if kwargs.get("channel") == "msedge" and state["edge"]:
+                return browser
+            raise Exception("not found")
+
+        chain, chromium = _chain_with_launch(side_effect)
+        clock = [1000.0]
+        with patch("execution.scrapers.playwright_scraper.sync_playwright", return_value=chain), \
+             patch("execution.scrapers.playwright_scraper.time.monotonic", side_effect=lambda: clock[0]):
+            assert fetch_html_playwright("https://a") is None
+            state["edge"] = True
+            clock[0] += playwright_scraper.RETRY_DETECTION_AFTER - 1
+            assert fetch_html_playwright("https://b") is None  # ainda no intervalo de espera
+            clock[0] += 2
+            assert fetch_html_playwright("https://c") == "<html>ok</html>"
+
+        assert _channels_tried(chromium) == ["msedge", "chrome", None, "msedge"]
+        assert playwright_scraper.browser_in_use() == "Microsoft Edge"
+
     def test_remembered_browser_that_stops_working_is_detected_again(self):
         state = {"edge": True}
 

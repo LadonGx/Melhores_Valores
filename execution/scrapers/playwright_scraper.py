@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 
 from playwright.sync_api import sync_playwright
 
@@ -23,6 +24,12 @@ _NONE_AVAILABLE = object()
 # Guardado para não pagar a tentativa de cada candidato em toda checagem.
 _browser_choice: object = _NOT_DETECTED
 _choice_lock = threading.Lock()
+
+# Sem navegador nenhum, tenta detectar de novo depois deste tempo, em vez de
+# desligar o nível 2 até reiniciar o app (a falha pode ser passageira: Edge
+# atualizando, processo travado, etc.).
+RETRY_DETECTION_AFTER = 600.0
+_none_available_until = 0.0
 
 
 def _reset_browser_choice() -> None:
@@ -52,10 +59,13 @@ def _launch_browser(p):
     o que funcionou; se ele deixar de funcionar (ex: desinstalado), a escolha é
     esquecida e a próxima chamada detecta de novo. Retorna None se nenhum abrir.
     """
-    global _browser_choice
+    global _browser_choice, _none_available_until
     choice = _browser_choice
     if choice is _NONE_AVAILABLE:
-        return None
+        if time.monotonic() < _none_available_until:
+            return None
+        _reset_browser_choice()
+        choice = _NOT_DETECTED
     if choice is not _NOT_DETECTED:
         try:
             return _launch(p, choice)
@@ -76,9 +86,11 @@ def _launch_browser(p):
             logger.info("playwright_scraper | usando %s no nível 2 da cascata", _BROWSER_LABELS[channel])
             return browser
         _browser_choice = _NONE_AVAILABLE
+        _none_available_until = time.monotonic() + RETRY_DETECTION_AFTER
         logger.error(
             "playwright_scraper | nenhum navegador disponível (Edge, Chrome ou Chromium) — "
-            "nível 2 da cascata desativado até reiniciar o app"
+            "nível 2 da cascata desativado; nova tentativa em %.0f min",
+            RETRY_DETECTION_AFTER / 60,
         )
         return None
 

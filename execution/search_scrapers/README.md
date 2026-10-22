@@ -12,7 +12,7 @@ Scrape search result pages (query → list of products) from each store. Differe
 
 | File | Store | Status |
 |---|---|---|
-| `amazon_search.py` | Amazon BR | Active |
+| `amazon_search.py` | Amazon BR | Active — httpx first; if it yields no result cards (503, verification page), falls back to `fetch_html_playwright` (system Edge/Chrome) |
 | `mercadolivre_search.py` | Mercado Livre | Active |
 
 **Disabled stores:** Magazine Luiza, Shopee (blocked from datacenter IPs — do not re-enable without residential proxy).

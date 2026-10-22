@@ -65,6 +65,9 @@ def _mock_httpx_response(html: str, raises: bool = False):
 
 # ─── search_amazon ────────────────────────────────────────────────────────
 
+PLAYWRIGHT = "execution.search_scrapers.amazon_search.fetch_html_playwright"
+
+
 class TestSearchAmazon:
     def test_normal_extraction(self):
         mock_client = _mock_httpx_response(AMAZON_SEARCH_RESULTS)
@@ -92,22 +95,62 @@ class TestSearchAmazon:
         assert "Echo Dot 5ª Geração" in titles
         assert len(results) == 1
 
-    def test_network_failure_returns_empty_list(self):
+    def test_network_failure_and_no_browser_returns_empty_list(self):
         mock_client = MagicMock()
         mock_client.__enter__.return_value = mock_client
         mock_client.get.side_effect = Exception("Connection refused")
 
-        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client):
+        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client), \
+             patch(PLAYWRIGHT, return_value=None):
             results = amazon_search.search_amazon("echo dot")
 
         assert results == []
 
-    def test_http_error_status_returns_empty_list(self):
+    def test_http_error_falls_back_to_browser(self):
+        """503 no httpx (o caso real mais comum) → nível 2 com o navegador do sistema."""
         mock_client = _mock_httpx_response(AMAZON_SEARCH_RESULTS, raises=True)
-        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client):
+        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client), \
+             patch(PLAYWRIGHT, return_value=AMAZON_SEARCH_RESULTS) as mock_pw:
             results = amazon_search.search_amazon("echo dot")
 
-        assert results == []
+        assert [r["title"] for r in results] == ["Echo Dot 5ª Geração"]
+        assert results[0]["price"] == 349.00
+        mock_pw.assert_called_once_with(
+            "https://www.amazon.com.br/s?k=echo+dot",
+            wait_for_selectors=("div[data-component-type='s-search-result']",),
+        )
+
+    def test_page_without_cards_falls_back_to_browser(self):
+        """httpx com 200 mas sem cards (página de verificação/captcha) também vai para o nível 2."""
+        mock_client = _mock_httpx_response("<html><body>Digite os caracteres que você vê</body></html>")
+        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client), \
+             patch(PLAYWRIGHT, return_value=AMAZON_SEARCH_RESULTS) as mock_pw:
+            results = amazon_search.search_amazon("echo dot")
+
+        assert len(results) == 1
+        mock_pw.assert_called_once()
+
+    def test_browser_is_not_used_when_httpx_works(self):
+        mock_client = _mock_httpx_response(AMAZON_SEARCH_RESULTS)
+        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client), \
+             patch(PLAYWRIGHT) as mock_pw:
+            amazon_search.search_amazon("echo dot")
+
+        mock_pw.assert_not_called()
+
+    def test_browser_page_without_cards_returns_empty_list(self):
+        mock_client = _mock_httpx_response("", raises=True)
+        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client), \
+             patch(PLAYWRIGHT, return_value="<html><body>nada</body></html>"):
+            assert amazon_search.search_amazon("produto que não existe") == []
+
+    def test_max_results_applies_to_browser_results(self):
+        card = AMAZON_SEARCH_RESULTS.split("<div", 2)[1]
+        many = "<html><body>" + "".join("<div" + card for _ in range(5)) + "</body></html>"
+        mock_client = _mock_httpx_response("", raises=True)
+        with patch("execution.search_scrapers.amazon_search.httpx.Client", return_value=mock_client), \
+             patch(PLAYWRIGHT, return_value=many):
+            assert len(amazon_search.search_amazon("echo dot", max_results=3)) == 3
 
 
 class TestParseAmazonPrice:

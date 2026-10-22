@@ -5,7 +5,11 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
+from ..scrapers.playwright_scraper import fetch_html_playwright
+
 logger = logging.getLogger(__name__)
+
+_RESULT_SELECTOR = "div[data-component-type='s-search-result']"
 
 HEADERS_POOL = [
     {
@@ -113,69 +117,89 @@ def _find_link(item) -> str | None:
     return None
 
 
-def search_amazon(query: str, max_results: int = 10) -> list[dict]:
-    """
-    Busca produtos na Amazon BR pela página de resultados.
-    Retorna lista normalizada de dicts prontos para salvar via db_client.
-    """
-    url = f"https://www.amazon.com.br/s?k={query.replace(' ', '+')}"
+def _parse_results(html: str, max_results: int) -> list[dict]:
+    """Lê os cards da página de resultados. Card malformado é pulado, não quebra o resto."""
     results = []
+    soup  = BeautifulSoup(html, "lxml")
+    items = soup.select(_RESULT_SELECTOR)
 
+    for item in items[:max_results]:
+        try:
+            title    = _find_title(item)
+            href     = _find_link(item)
+            image_el = item.select_one("img.s-image")
+
+            if not title or not href:
+                continue
+
+            price = _parse_amazon_price(item)
+
+            # Rating: "4,5 de 5 estrelas"
+            rating = None
+            rating_el = item.select_one("span.a-icon-alt")
+            if rating_el:
+                try:
+                    rating = float(
+                        rating_el.get_text(strip=True).split(" ")[0].replace(",", ".")
+                    )
+                except Exception:
+                    pass
+
+            # Contagem de reviews
+            reviews = None
+            reviews_el = item.select_one("span.a-size-base.s-underline-text")
+            if reviews_el:
+                try:
+                    reviews = int(re.sub(r"[^\d]", "", reviews_el.get_text(strip=True)))
+                except Exception:
+                    pass
+
+            results.append({
+                "store":        "amazon",
+                "title":        title,
+                "product_url":  href,
+                "price":        price,
+                "currency":     "BRL",
+                "image_url":    image_el.get("src") if image_el else None,
+                "rating":       rating,
+                "review_count": reviews,
+            })
+        except Exception:
+            continue
+
+    return results
+
+
+def _fetch_html_httpx(url: str, query: str) -> str | None:
     try:
         headers = random.choice(HEADERS_POOL)
         with httpx.Client(timeout=20, headers=headers, follow_redirects=True) as client:
             response = client.get(url)
             response.raise_for_status()
+        return response.text
+    except Exception as e:
+        logger.warning("amazon_search | nível 1 (httpx) falhou | query='%s' | error=%s", query, e)
+        return None
 
-        soup  = BeautifulSoup(response.text, "lxml")
-        items = soup.select("div[data-component-type='s-search-result']")
 
-        for item in items[:max_results]:
-            try:
-                title    = _find_title(item)
-                href     = _find_link(item)
-                image_el = item.select_one("img.s-image")
+def search_amazon(query: str, max_results: int = 10) -> list[dict]:
+    """
+    Busca produtos na Amazon BR pela página de resultados.
+    Retorna lista normalizada de dicts prontos para salvar via db_client.
 
-                if not title or not href:
-                    continue
+    Nível 1: httpx (rápido). Se não vier nenhum card (503, página de
+    verificação, erro de rede), nível 2: navegador do sistema via Playwright
+    (Edge/Chrome), que passa onde o httpx é barrado.
+    """
+    url = f"https://www.amazon.com.br/s?k={query.replace(' ', '+')}"
 
-                price = _parse_amazon_price(item)
+    html = _fetch_html_httpx(url, query)
+    results = _parse_results(html, max_results) if html else []
+    if results:
+        logger.info("amazon_search | %d resultados (nível 1) | query='%s'", len(results), query)
+        return results
 
-                # Rating: "4,5 de 5 estrelas"
-                rating = None
-                rating_el = item.select_one("span.a-icon-alt")
-                if rating_el:
-                    try:
-                        rating = float(
-                            rating_el.get_text(strip=True).split(" ")[0].replace(",", ".")
-                        )
-                    except Exception:
-                        pass
-
-                # Contagem de reviews
-                reviews = None
-                reviews_el = item.select_one("span.a-size-base.s-underline-text")
-                if reviews_el:
-                    try:
-                        reviews = int(re.sub(r"[^\d]", "", reviews_el.get_text(strip=True)))
-                    except Exception:
-                        pass
-
-                results.append({
-                    "store":        "amazon",
-                    "title":        title,
-                    "product_url":  href,
-                    "price":        price,
-                    "currency":     "BRL",
-                    "image_url":    image_el.get("src") if image_el else None,
-                    "rating":       rating,
-                    "review_count": reviews,
-                })
-            except Exception:
-                continue
-
-    except Exception:
-        logger.exception("amazon_search | erro ao buscar | query='%s'", query)
-
-    logger.info("amazon_search | %d resultados | query='%s'", len(results), query)
+    html = fetch_html_playwright(url, wait_for_selectors=(_RESULT_SELECTOR,))
+    results = _parse_results(html, max_results) if html else []
+    logger.info("amazon_search | %d resultados (nível 2) | query='%s'", len(results), query)
     return results
