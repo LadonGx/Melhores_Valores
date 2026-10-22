@@ -1,12 +1,13 @@
 """
 Ponto de entrada do app desktop (chamado pelo main.py da raiz e pelo .exe).
 
-- Instância única: se o app já está aberto, só abre o navegador nele e sai.
+- Janela própria (pywebview/WebView2): minimizar, restaurar, fechar = sair.
+  `--browser` abre no navegador padrão; `--no-browser` só sobe o servidor.
+- Instância única: se o app já está aberto, traz a janela dele para frente e sai.
 - Porta estável: usa a mesma porta da última abertura (padrão 47290); só troca
   se ela estiver ocupada por outro programa. Estável porque o localStorage do
   frontend (grupos de produtos, filtros) é separado por porta.
 - Escuta só em 127.0.0.1: nenhum outro computador da rede acessa o app.
-- Abre o navegador assim que a API responder.
 - Logs vão para <pasta de dados>/logs/app.log (no .exe sem console não há terminal).
 """
 
@@ -22,7 +23,7 @@ import urllib.request
 import webbrowser
 from logging.handlers import RotatingFileHandler
 
-from .settings import LOCK_PATH, LOG_DIR, PORT_PATH
+from .settings import LOCK_PATH, LOG_DIR, PORT_PATH, WEBVIEW_DIR
 
 HOST = "127.0.0.1"
 # Fora das portas comuns de dev (8000, 3000, 5173...) e abaixo da faixa efêmera
@@ -31,6 +32,9 @@ DEFAULT_PORT = 47290
 # Texto do health check da API (GET /api/), usado para reconhecer uma instância nossa
 _HEALTH_MARKER = "Price Tracker API"
 STARTUP_TIMEOUT = 30.0
+
+WINDOW_TITLE = "Melhores Valores"
+WINDOW_BACKGROUND = "#0f1117"  # --color-bg do frontend (apps/web/src/styles/global.css)
 
 logger = logging.getLogger("execution.launcher")
 
@@ -47,6 +51,10 @@ def configure_logging() -> None:
         handlers=handlers,
         force=True,
     )
+    # Uma falha ao escrever log nunca pode derrubar quem chamou o log. No Python
+    # 3.12, um UnicodeEncodeError dentro do handler escapa para o chamador (ex:
+    # "migração v0 → v1" num stderr cp1252 abortava a migração do banco no .exe).
+    logging.raiseExceptions = False
     # Uma linha por requisição do scraping polui o log sem ajudar no dia a dia
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -143,30 +151,112 @@ def open_browser_when_ready(port: int, timeout: float = STARTUP_TIMEOUT) -> bool
     return False
 
 
+def focus_running_instance(port: int) -> bool:
+    """Pede à instância aberta para trazer a janela para frente. False se ela não tem janela."""
+    request = urllib.request.Request(f"http://{HOST}:{port}/_desktop/focus", method="POST", data=b"")
+    try:
+        with urllib.request.urlopen(request, timeout=2) as resp:
+            return resp.status == 200
+    except OSError:
+        return False
+
+
+def _bring_to_front(window) -> None:
+    window.restore()
+    window.show()
+    # No Windows, alternar "sempre no topo" é o jeito confiável de passar à frente
+    window.on_top = True
+    window.on_top = False
+
+
+def _wait_until(condition, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def run_with_window(server, sock: socket.socket, port: int) -> None:
+    """
+    Servidor numa thread e a janela nativa (WebView2, via pywebview) na thread
+    principal, como o pywebview exige. Fechar a janela encerra o servidor, e o
+    lifespan desliga agendador e fila. Sem WebView2, cai para o navegador padrão.
+    """
+    from .desktop_app import set_focus_handler
+
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, name="server", daemon=True)
+    thread.start()
+    if not _wait_until(lambda: server.started, STARTUP_TIMEOUT):
+        logger.error("O servidor não subiu em %.0fs; encerrando", STARTUP_TIMEOUT)
+        server.should_exit = True
+        thread.join(timeout=10)
+        return
+
+    url = f"http://{HOST}:{port}/"
+    try:
+        import webview
+
+        window = webview.create_window(
+            WINDOW_TITLE, url,
+            width=1280, height=820, min_size=(960, 640),
+            background_color=WINDOW_BACKGROUND,  # mesma cor do app: sem "flash" branco ao abrir
+            text_select=True,                    # permitir copiar nomes, preços, links
+        )
+        set_focus_handler(lambda: _bring_to_front(window))
+        WEBVIEW_DIR.mkdir(parents=True, exist_ok=True)
+        # private_mode=False + storage_path fixo: o padrão do pywebview é modo
+        # privado, que apagaria o localStorage (grupos, filtros) a cada abertura
+        webview.start(private_mode=False, storage_path=str(WEBVIEW_DIR))
+        logger.info("Janela fechada — encerrando o app")
+    except Exception:
+        logger.exception("Não foi possível abrir a janela do app (WebView2?) — usando o navegador padrão")
+        set_focus_handler(None)
+        webbrowser.open(url)
+        thread.join()  # segue rodando até o processo ser encerrado
+        return
+    finally:
+        set_focus_handler(None)
+
+    server.should_exit = True
+    thread.join(timeout=15)
+
+
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="MelhoresValores", description="Rastreador de preços (app local).")
     parser.add_argument(
         "--port", type=int, default=None,
         help=f"porta preferida (padrão: a da última abertura, ou {DEFAULT_PORT})",
     )
-    parser.add_argument("--no-browser", action="store_true", help="não abrir o navegador")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--browser", action="store_true", help="abrir no navegador padrão em vez da janela do app")
+    mode.add_argument("--no-browser", action="store_true", help="só o servidor, sem janela nem navegador")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
-    # No .exe sem console, stdout/stderr são None e qualquer print derrubaria o app
+    # No .exe sem console, stdout/stderr são None e qualquer print derrubaria o app.
+    # UTF-8 explícito: o padrão do Windows (cp1252) não codifica "→", acentos raros etc.
     if sys.stdout is None:
-        sys.stdout = open(os.devnull, "w")
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
     if sys.stderr is None:
-        sys.stderr = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    # Console em cp1252: caractere sem equivalente vira \uXXXX em vez de erro
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     configure_logging()
 
     args = _parse_args(argv)
+    mode = "browser" if args.browser else "none" if args.no_browser else "window"
 
     running_port = find_running_instance()
     if running_port:
         logger.info("O app já está aberto em http://%s:%d/", HOST, running_port)
-        if not args.no_browser:
+        if mode == "window" and focus_running_instance(running_port):
+            return 0
+        if mode != "none":
             webbrowser.open(f"http://{HOST}:{running_port}/")
         return 0
 
@@ -178,14 +268,16 @@ def main(argv: list[str] | None = None) -> int:
     port = sock.getsockname()[1]
     write_lock(port)
     save_port(port)
-    logger.info("Melhores Valores rodando em http://%s:%d/ (Ctrl+C para sair)", HOST, port)
-
-    if not args.no_browser:
-        threading.Thread(target=open_browser_when_ready, args=(port,), name="browser", daemon=True).start()
+    logger.info("Melhores Valores rodando em http://%s:%d/ (modo: %s)", HOST, port, mode)
 
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False))
     try:
-        server.run(sockets=[sock])
+        if mode == "window":
+            run_with_window(server, sock, port)
+        else:
+            if mode == "browser":
+                threading.Thread(target=open_browser_when_ready, args=(port,), name="browser", daemon=True).start()
+            server.run(sockets=[sock])
     finally:
         remove_lock()
         sock.close()

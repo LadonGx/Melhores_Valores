@@ -3,13 +3,16 @@ Testes do ponto de entrada do desktop: lock de instância única, escolha de
 porta, detecção da instância já aberta e abertura do navegador.
 """
 
+import io
 import json
 import logging
 import os
 import socket
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,6 +24,7 @@ def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(launcher, "LOCK_PATH", tmp_path / "app.lock")
     monkeypatch.setattr(launcher, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(launcher, "PORT_PATH", tmp_path / "port")
+    monkeypatch.setattr(launcher, "WEBVIEW_DIR", tmp_path / "webview")
 
 
 def _serve(payload: dict | None):
@@ -171,20 +175,41 @@ class TestMain:
     @pytest.fixture(autouse=True)
     def restore_logging(self):
         root = logging.getLogger()
-        saved = root.handlers[:], root.level
+        saved = root.handlers[:], root.level, logging.raiseExceptions
         yield
         for h in root.handlers:
             if h not in saved[0]:
                 h.close()
-        root.handlers, root.level = saved
+        root.handlers, root.level, logging.raiseExceptions = saved
 
-    def test_second_launch_reuses_running_instance(self):
+    def test_second_launch_brings_existing_window_to_front(self):
         with patch.object(launcher, "find_running_instance", return_value=8123), \
+             patch.object(launcher, "focus_running_instance", return_value=True) as mock_focus, \
              patch.object(launcher.webbrowser, "open") as mock_open, \
              patch.object(launcher, "bind_socket") as mock_bind:
             assert launcher.main([]) == 0
-        mock_open.assert_called_once_with("http://127.0.0.1:8123/")
+        mock_focus.assert_called_once_with(8123)
+        mock_open.assert_not_called()
         mock_bind.assert_not_called()
+
+    def test_second_launch_opens_browser_when_instance_has_no_window(self):
+        with patch.object(launcher, "find_running_instance", return_value=8123), \
+             patch.object(launcher, "focus_running_instance", return_value=False), \
+             patch.object(launcher.webbrowser, "open") as mock_open:
+            assert launcher.main([]) == 0
+        mock_open.assert_called_once_with("http://127.0.0.1:8123/")
+
+    def test_second_launch_in_browser_mode_opens_browser(self):
+        with patch.object(launcher, "find_running_instance", return_value=8123), \
+             patch.object(launcher, "focus_running_instance") as mock_focus, \
+             patch.object(launcher.webbrowser, "open") as mock_open:
+            assert launcher.main(["--browser"]) == 0
+        mock_focus.assert_not_called()
+        mock_open.assert_called_once_with("http://127.0.0.1:8123/")
+
+    def test_browser_and_no_browser_are_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            launcher.main(["--browser", "--no-browser"])
 
     def test_second_launch_with_no_browser(self):
         with patch.object(launcher, "find_running_instance", return_value=8123), \
@@ -192,8 +217,140 @@ class TestMain:
             assert launcher.main(["--no-browser"]) == 0
         mock_open.assert_not_called()
 
+    def test_log_with_char_missing_in_cp1252_never_breaks_the_caller(self, monkeypatch):
+        """Regressão do .exe: "→" num stderr cp1252 abortava a migração do banco."""
+        monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+        launcher.configure_logging()
+        logging.getLogger("execution.db_client").info("Aplicando migração do banco: v0 → v1")  # não pode levantar
+        assert "v0 → v1" in (launcher.LOG_DIR / "app.log").read_text(encoding="utf-8")
+
+    def test_frozen_without_console_gets_utf8_streams(self, monkeypatch):
+        monkeypatch.setattr(sys, "stdout", None)
+        monkeypatch.setattr(sys, "stderr", None)
+        with patch.object(launcher, "find_running_instance", return_value=8123):
+            launcher.main(["--no-browser"])
+        assert sys.stderr.encoding.lower().replace("-", "") == "utf8"
+        print("v0 → v1", file=sys.stderr)  # não pode levantar
+        sys.stdout.close()
+        sys.stderr.close()
+
     def test_logging_goes_to_file(self):
         with patch.object(launcher, "find_running_instance", return_value=8123):
             launcher.main(["--no-browser"])
         log = (launcher.LOG_DIR / "app.log").read_text(encoding="utf-8")
         assert "já está aberto em http://127.0.0.1:8123/" in log
+
+
+# ─── Janela nativa (pywebview) ────────────────────────────────────────────
+
+class _FakeServer:
+    """Imita o uvicorn.Server: run() "sobe" na hora e fica até should_exit."""
+
+    def __init__(self, starts=True):
+        self.started = False
+        self.should_exit = False
+        self._starts = starts
+        self.ran_with = None
+
+    def run(self, sockets=None):
+        self.ran_with = sockets
+        if self._starts:
+            self.started = True
+            while not self.should_exit:
+                time.sleep(0.01)
+
+
+def _fake_webview(start_side_effect=None):
+    webview = MagicMock()
+    webview.create_window.return_value = MagicMock(name="window")
+    if start_side_effect:
+        webview.start.side_effect = start_side_effect
+    return webview
+
+
+class TestRunWithWindow:
+    def test_window_uses_persistent_storage_and_closing_stops_server(self, monkeypatch):
+        from execution import desktop_app
+
+        seen = {}
+
+        def on_start(**kwargs):
+            # durante a janela aberta, a 2ª abertura consegue trazê-la para frente
+            seen["handler_registered"] = desktop_app._focus_handler is not None
+            assert server.should_exit is False
+
+        webview = _fake_webview(on_start)
+        monkeypatch.setitem(sys.modules, "webview", webview)
+        server = _FakeServer()
+
+        launcher.run_with_window(server, sock=MagicMock(), port=8123)
+
+        args, kwargs = webview.create_window.call_args
+        assert args == ("Melhores Valores", "http://127.0.0.1:8123/")
+        assert kwargs["text_select"] is True
+        assert kwargs["background_color"] == "#0f1117"
+        assert webview.start.call_args.kwargs == {"private_mode": False, "storage_path": str(launcher.WEBVIEW_DIR)}
+        assert launcher.WEBVIEW_DIR.is_dir()
+        assert seen["handler_registered"] is True
+        assert desktop_app._focus_handler is None   # limpo ao fechar
+        assert server.should_exit is True            # fechar a janela encerra o servidor
+
+    def test_without_webview2_falls_back_to_browser(self, monkeypatch):
+        webview = _fake_webview()
+        webview.start.side_effect = RuntimeError("WebView2 runtime not found")
+        monkeypatch.setitem(sys.modules, "webview", webview)
+        server = _FakeServer()
+        opened = []
+
+        def open_and_stop(url):
+            opened.append(url)
+            server.should_exit = True  # simula o usuário encerrando depois
+
+        with patch.object(launcher.webbrowser, "open", side_effect=open_and_stop):
+            launcher.run_with_window(server, sock=MagicMock(), port=8123)
+
+        assert opened == ["http://127.0.0.1:8123/"]
+
+    def test_no_window_when_server_does_not_start(self, monkeypatch):
+        webview = _fake_webview()
+        monkeypatch.setitem(sys.modules, "webview", webview)
+        monkeypatch.setattr(launcher, "STARTUP_TIMEOUT", 0.2)
+
+        launcher.run_with_window(_FakeServer(starts=False), sock=MagicMock(), port=8123)
+
+        webview.create_window.assert_not_called()
+
+    def test_bring_to_front(self):
+        window = MagicMock()
+        launcher._bring_to_front(window)
+        window.restore.assert_called_once()
+        window.show.assert_called_once()
+        assert window.on_top is False  # alternado True → False
+
+
+class TestFocusRunningInstance:
+    def test_true_when_instance_accepts(self):
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok"}')
+
+            def log_message(self, *args):
+                pass
+
+        received = []
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            assert launcher.focus_running_instance(server.server_address[1]) is True
+        finally:
+            server.shutdown()
+        assert received == ["/_desktop/focus"]
+
+    def test_false_when_nothing_listens(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            free_port = s.getsockname()[1]
+        assert launcher.focus_running_instance(free_port) is False

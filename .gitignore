@@ -29,6 +29,10 @@ apps/web/dist/
 apps/web/.env
 *.tsbuildinfo
 
+# Build do executável (scripts/build_desktop.ps1)
+/build/
+/dist/
+
 # Banco SQLite local (MV_DATA_DIR em dev)
 .data/
 *.db

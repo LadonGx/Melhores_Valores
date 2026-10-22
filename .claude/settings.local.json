@@ -18,7 +18,11 @@
       "Bash(Select-Object -Property FullName, PSIsContainer)",
       "Bash(ConvertTo-Json)",
       "PowerShell(python -m pytest execution/tests -q 2>&1)",
-      "PowerShell(pnpm build 2>&1)"
+      "PowerShell(pnpm build 2>&1)",
+      "PowerShell(pip index versions \"psycopg\" 2>$null)",
+      "PowerShell(pip install \"psycopg[binary]==3.2.3\" 2>&1)",
+      "PowerShell(python scripts/copy_web_data.py --dry-run --with-search-results 2>&1)",
+      "PowerShell(python scripts/copy_web_data.py --with-search-results 2>&1)"
     ]
   }
 }

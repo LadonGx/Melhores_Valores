@@ -11,6 +11,7 @@ devolveria JSON. O frontend já chama `/api` por padrão (services/api.ts).
 
 import logging
 from pathlib import Path, PurePosixPath
+from typing import Callable
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -53,9 +54,29 @@ class SPAStaticFiles(StaticFiles):
         return response
 
 
+# Registrado pelo launcher quando há janela nativa: traz a janela para frente
+_focus_handler: Callable[[], None] | None = None
+
+
+def set_focus_handler(handler: Callable[[], None] | None) -> None:
+    global _focus_handler
+    _focus_handler = handler
+
+
 def create_app(web_dist: Path = WEB_DIST_DIR) -> FastAPI:
     # Sub-apps montados não rodam o próprio lifespan: o raiz assume o do web_server
     root = FastAPI(title="Melhores Valores", lifespan=web_server.lifespan, docs_url=None, redoc_url=None)
+
+    # Fora de /api: é controle do app desktop, não parte da API do produto.
+    # Precisa vir antes do mount "/" do frontend, que captura todos os caminhos.
+    @root.post("/_desktop/focus", include_in_schema=False)
+    async def focus_window():
+        """Uma 2ª abertura do app pede para a janela já aberta vir para frente."""
+        if _focus_handler is None:
+            raise HTTPException(status_code=404)
+        _focus_handler()
+        return {"status": "ok"}
+
     root.mount("/api", web_server.app)
 
     if (web_dist / "index.html").is_file():

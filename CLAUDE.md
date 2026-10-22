@@ -36,10 +36,19 @@ pnpm build
 ```bash
 pnpm build                       # builds apps/web/dist (served by the app)
 pip install -r requirements.txt
-python main.py                   # opens the browser at http://127.0.0.1:47290/
-python main.py --no-browser --port 9000
+python main.py                   # native window (pywebview/WebView2) at http://127.0.0.1:47290/
+python main.py --browser         # default browser instead of the window
+python main.py --no-browser --port 9000   # server only
 ```
-API under `/api`, SPA at `/`. Single instance (`app.lock`); the port is kept stable across launches (`port` file) because the frontend keeps data in `localStorage`. Logs: `<data dir>/logs/app.log`.
+
+### Executable (Windows)
+```powershell
+pip install -r requirements.txt -r requirements-dev.txt
+powershell -ExecutionPolicy Bypass -File scripts\build_desktop.ps1   # → dist\MelhoresValores\MelhoresValores.exe
+powershell -ExecutionPolicy Bypass -File scripts\sandbox_test.ps1    # run it in Windows Sandbox (clean machine)
+```
+Spec: `packaging/melhores_valores.spec` (onedir, no console, no UPX). The build script fails if `.env`/`*.db` end up in `dist`.
+API under `/api`, SPA at `/`. Closing the window exits the app. Single instance (`app.lock`; a 2nd launch focuses the window via `POST /_desktop/focus`); the port is kept stable across launches (`port` file) because the frontend keeps data in `localStorage`. Logs: `<data dir>/logs/app.log`.
 
 ### Backend only (dev, with `pnpm dev` proxying `/api` → 8000)
 ```bash
@@ -53,7 +62,7 @@ SQLite file created automatically on first access, in the user data dir
 Schema changes: append a new entry to `MIGRATIONS` in `execution/db_schema.py` (versioned by `PRAGMA user_version`).
 
 > Branch `exe` is migrating to a single-process desktop app — see `docs/plano-executavel.md`.
-> Done: SQLite (2), in-memory cache (3), threads + APScheduler (4), single entry point serving the frontend (5), system Edge/Chrome for Playwright + web-data copy script (6). Pending: native window + PyInstaller (7), re-check button + release + `README-EXE.md` (8).
+> Done: SQLite (2), in-memory cache (3), threads + APScheduler (4), single entry point serving the frontend (5), system Edge/Chrome for Playwright + web-data copy script (6), native window + PyInstaller (7; Windows Sandbox test pending). Pending: re-check button + release + `README-EXE.md` (8).
 > Rules: `main` (web version) is untouched; testers start with an empty DB; the frozen build never loads the repo `.env`; web data may only be **copied** (`scripts/copy_web_data.py`, read-only).
 
 ## Architecture
@@ -112,7 +121,8 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 | `execution/models.py` | Pydantic models returned by `db_client` (same field names the Prisma models had) |
 | `execution/settings.py` | User data dir, DB/log/lock/port paths, web dist location, `.env`/`config.env` loading |
 | `execution/desktop_app.py` | Root ASGI app: `/api` → `web_server.app`, `/` → SPA (`SPAStaticFiles`) |
-| `execution/launcher.py` | Desktop entry point (`main.py`): instance lock, port, browser, logging |
+| `execution/launcher.py` | Desktop entry point (`main.py`): native window, instance lock, port, logging |
+| `packaging/melhores_valores.spec` | PyInstaller spec for the Windows executable |
 | `execution/scraping_orchestrator.py` | 3-level cascade scraping strategy |
 | `execution/search_orchestrator.py` | Multi-store search coordination |
 | `execution/cache_manager.py` | In-memory TTL cache (`memory_cache`, thread-safe) with SHA256 URL keys — replaces Redis |

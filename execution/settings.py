@@ -50,6 +50,9 @@ LOCK_PATH = DATA_DIR / "app.lock"
 # guarda dados no localStorage (ex: grupos de produtos), que é separado por
 # origem (host + porta) — mudar de porta faria esses dados "sumirem".
 PORT_PATH = DATA_DIR / "port"
+# Perfil do WebView2 da janela do app (localStorage, cookies). Fixo para que
+# grupos e filtros do frontend sobrevivam entre aberturas.
+WEBVIEW_DIR = DATA_DIR / "webview"
 
 # Chromium do Playwright, se um dia for baixado pelo app (o nível 2 usa antes o
 # Edge/Chrome do sistema). No executável, aponta o Playwright para a pasta de

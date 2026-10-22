@@ -13,10 +13,10 @@ import pytest
 from execution import desktop_app, web_server
 
 
-def _get(app, path: str) -> tuple[int, dict[str, str], bytes]:
+def _get(app, path: str, method: str = "GET") -> tuple[int, dict[str, str], bytes]:
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-        "method": "GET", "scheme": "http", "path": path, "raw_path": path.encode(),
+        "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
         "query_string": b"", "root_path": "", "headers": [(b"host", b"testserver")],
         "client": ("127.0.0.1", 50000), "server": ("testserver", 80),
     }
@@ -108,3 +108,28 @@ class TestMissingBuild:
         status, _, body = _get(app, "/api/")
         assert status == 200
         assert json.loads(body)["status"] == "ok"
+
+
+class TestFocusEndpoint:
+    @pytest.fixture(autouse=True)
+    def no_handler(self):
+        desktop_app.set_focus_handler(None)
+        yield
+        desktop_app.set_focus_handler(None)
+
+    def test_404_when_running_without_window(self, app):
+        status, _, _ = _get(app, "/_desktop/focus", method="POST")
+        assert status == 404
+
+    def test_calls_window_handler(self, app):
+        calls = []
+        desktop_app.set_focus_handler(lambda: calls.append(1))
+        status, _, body = _get(app, "/_desktop/focus", method="POST")
+        assert status == 200 and json.loads(body) == {"status": "ok"}
+        assert calls == [1]
+
+    def test_route_is_not_shadowed_by_the_spa(self, app):
+        """O mount "/" do frontend captura tudo; a rota de foco precisa vir antes dele."""
+        desktop_app.set_focus_handler(lambda: None)
+        status, headers, _ = _get(app, "/_desktop/focus", method="POST")
+        assert status == 200 and headers["content-type"] == "application/json"

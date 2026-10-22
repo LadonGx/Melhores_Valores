@@ -41,7 +41,7 @@ Execution (execution/)           ← Deterministic modules (scrapers, adapters, 
 
 ```
 execution/
-  launcher.py            ← Desktop entry point (main.py): instance lock, stable port, browser, logs
+  launcher.py            ← Desktop entry point (main.py): native window (pywebview), instance lock, stable port, logs
   desktop_app.py         ← Root app: /api → web_server.app, / → built frontend (SPA fallback)
   web_server.py          ← FastAPI routes (mounted at /api in the desktop app)
   worker_tasks.py        ← Price pipeline + background tasks (@task)

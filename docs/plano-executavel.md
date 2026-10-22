@@ -305,32 +305,38 @@ Conclusões:
 **Pronto quando:** com Edge, sem Chromium do Playwright e sem chave do Firecrawl, um produto que exige JS (nível 2) é capturado. ✅
 
 ---
-### Fase 7: Empacotamento com PyInstaller
+### Fase 7: Janela nativa e empacotamento com PyInstaller ✅ (falta só o teste na Windows Sandbox)
 
 **Objetivo:** pasta `dist/MelhoresValores/` com `MelhoresValores.exe` que roda numa máquina limpa.
 
-- [ ] **Janela nativa (decidido: comportamento padrão de `.exe`: minimizar, restaurar, fechar)** com `pywebview`, que no Windows usa o Edge WebView2, já presente no Windows 10/11. Pode ser validada com `python main.py` antes do PyInstaller:
-  - O uvicorn roda numa thread; a janela (`webview.create_window` apontando para `http://127.0.0.1:<porta>/`) fica na thread principal. **Fechar a janela** para o uvicorn, e o `lifespan` desliga agendador e fila.
-  - **`private_mode=False` + `storage_path=<pasta de dados>/webview`**: o padrão do pywebview é modo privado, que apagaria o `localStorage` (grupos, filtros) a cada abertura.
-  - 2ª abertura: em vez de abrir o navegador, pede à instância aberta para trazer a janela para frente (rota local só do `desktop_app`, fora de `/api`).
-  - `--browser` (dev) mantém o modo atual, que abre no navegador padrão.
-  - Título "Melhores Valores", ícone, tamanho mínimo, e lembrar tamanho/posição da janela (opcional).
-  - Sem WebView2 (Windows antigo): mensagem explicando como instalar, ou cair para o navegador padrão.
-- [ ] **Executável sem dados do dev:** o `.spec` não pode incluir `.env`, `*.db` nem `.data/`. O `settings.py` já não carrega o `.env` do repo quando `is_frozen()` (feito, com teste). Conferir na Windows Sandbox que a 1ª abertura cria um banco vazio e que não há chave do Firecrawl configurada.
-- [ ] `packaging/melhores_valores.spec` (versionado, em vez de linha de comando):
-  - `--onedir` (abre mais rápido e gera menos alerta de antivírus que `--onefile`).
-  - `datas`: `apps/web/dist` → `web_dist` (é onde `settings.WEB_DIST_DIR` procura quando `is_frozen()`).
-  - `hiddenimports`: submódulos do `uvicorn` (`uvicorn.logging`, `uvicorn.loops.auto`, `uvicorn.protocols.http.auto`, ...) e `apscheduler`. `lxml` e `playwright` têm hooks no `pyinstaller-hooks-contrib`.
-  - Inclui o driver do Playwright, mas **não** os navegadores.
-  - `console=False` e ícone (a janela é a do `pywebview`, não um terminal).
-- [ ] `scripts/build_desktop.ps1` (e `.sh`): `pnpm build` → `pyinstaller packaging/melhores_valores.spec`.
-- [ ] Testar na **Windows Sandbox** (vem no Windows 11 Pro e é uma máquina limpa descartável, sem Python/Node/Docker): abrir, adicionar produto, fechar, reabrir e conferir se o histórico continua lá.
+- [x] **Janela nativa** (`pywebview==6.2.1`, que usa o Edge WebView2 do Windows) em `launcher.run_with_window`:
+  - Servidor (uvicorn) numa thread; a janela na thread principal, como o pywebview exige. Só abre depois de o servidor responder. **Fechar a janela** para o servidor, e o `lifespan` desliga agendador e fila.
+  - `private_mode=False` + `storage_path=<pasta de dados>/webview` (`settings.WEBVIEW_DIR`), porque o padrão do pywebview é modo privado.
+  - `background_color` igual ao do app (`#0f1117`, sem flash branco ao abrir) e `text_select=True` (o padrão do pywebview impede selecionar e copiar texto). Tamanho 1280×820, mínimo 960×640.
+  - 2ª abertura: `POST /_desktop/focus` (rota do `desktop_app`, fora de `/api`, registrada antes do mount do frontend) restaura e traz a janela para frente.
+  - Modos: padrão = janela; `--browser` = navegador padrão; `--no-browser` = só o servidor. Sem WebView2, cai para o navegador padrão.
+  - `main.py` encerra com `os._exit` depois do `main()`: uma checagem em andamento deixaria o processo vivo e invisível por até ~30 s depois de fechar a janela (o SQLite desfaz a escrita interrompida).
+  - Não feito (opcional): lembrar o tamanho e a posição da janela.
+- [x] **Executável sem dados do dev:** o `.spec` só inclui o código, o `web_dist` e o driver do Playwright. O `scripts/build_desktop.ps1` **falha o build** se aparecer `.env`, `config.env` ou `*.db*` na pasta gerada. O `settings.py` não carrega o `.env` do repo no executável (com teste).
+- [x] `packaging/melhores_valores.spec`: `--onedir`, `console=False`, sem UPX (falso positivo de antivírus), ícone, `datas` = `apps/web/dist` → `web_dist`, `hiddenimports` = submódulos do `uvicorn` + backend asyncio do `anyio`, `excludes` de ferramentas de dev. Aborta com mensagem clara se faltar o `pnpm build`.
+  - Ajuste preventivo: o agendador passou a usar `IntervalTrigger(...)` em vez do texto `"interval"`, que o APScheduler resolve por entry points que o PyInstaller não leva.
+- [x] `packaging/icon.ico` (selo "MV" da barra lateral, na cor `--color-primary`), gerado por `packaging/make_icon.py`.
+- [x] `scripts/build_desktop.ps1`: `pnpm build` → PyInstaller → checagem de vazamento → tamanho. `pyinstaller==6.22.3` no `requirements-dev.txt`; `pywebview==6.2.1` no `requirements.txt`. `/build/` e `/dist/` no `.gitignore`.
+- [x] Testes: janela (armazenamento persistente, fechar encerra o servidor, sem WebView2 → navegador, servidor que não sobe → sem janela, trazer para frente), 2ª abertura (foca a janela / abre o navegador / `--browser`), rota de foco (404 sem janela, chama o handler, não é engolida pelo SPA) e regressão do log em cp1252. Total: 253.
+- [ ] **Testar na Windows Sandbox:** o recurso **não está habilitado** nesta máquina (exige administrador e reinício). `scripts/sandbox_test.ps1` já abre o `.exe` lá dentro quando estiver habilitado.
 - [ ] Opcional: instalador com Inno Setup (atalho no menu Iniciar, desinstalador).
+- Possível enxugamento (não feito): `cryptography` (8 MB) e `PIL` (5 MB) entram por imports opcionais de dependências. Dá para excluir depois de confirmar que nada os usa em tempo de execução.
 
-**Pronto quando:** o `.exe` funciona na Windows Sandbox.
+**Validação real:**
+- `python main.py`: a janela abriu com o dashboard e as imagens dos produtos. **Minimizar** + abrir o app de novo → a janela voltou para frente (2ª abertura saiu em 0,3 s). **Fechar** pelo X → app encerrado em 0,2 s, lock apagado, porta liberada.
+- `localStorage` entre aberturas: a 1ª abertura gravou um valor pelo próprio WebView2, a 2ª leu o mesmo valor.
+- **Build:** `dist\MelhoresValores\MelhoresValores.exe`, 165 MB na pasta (102 MB são o driver do Playwright: Node + Playwright; o frontend ocupa 0,8 MB).
+- **Bug encontrado só no `.exe` e corrigido:** sem console, o `stderr` era um arquivo nulo em cp1252. O log "migração v0 **→** v1" levantava `UnicodeEncodeError`, que no Python 3.12 escapa do handler para o chamador. A migração era abortada e todas as consultas falhavam. Correção: `devnull` em UTF-8, `reconfigure(errors="backslashreplace")` e `logging.raiseExceptions = False` (falha de log nunca derruba o app). Teste de regressão incluído.
+- **`.exe` como testador novo** (pasta de dados vazia, aberto a partir da raiz do repo, onde está o `.env`): banco criado do zero (v2, 0 produtos, 0 histórico), API e frontend ok, sem erros no log. Busca "echo dot": 503 no `httpx` → **driver do Playwright empacotado abriu o Edge** → 10 resultados. Monitorar → produto gravado. Janela com o ícone "MV"; fechar → processo encerrado, lock apagado, **nenhum Edge headless órfão**.
+
+**Pronto quando:** o `.exe` funciona na Windows Sandbox. → Funciona numa pasta de dados vazia nesta máquina; o teste em máquina limpa depende de habilitar o Sandbox.
 
 ---
-
 ### Fase 8: Build multiplataforma e distribuição
 
 - [ ] **Botão para checar o preço de novo dentro dos itens** (a checagem automática só roda com o app aberto, então o usuário precisa disparar na hora que quiser). Fica para o final, antes da release. *A definir com você:* hoje a lista de produtos já tem "Atualizar preço" por item (`POST /product/{id}/refresh`). O pedido é (a) levar esse botão também para dentro do modal de detalhes do item, (b) um "Atualizar todos", ou (c) refazer a **busca por nome** de um item?
@@ -401,6 +407,6 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - [x] F4 `task_runner.py` + APScheduler com recuperação na abertura
 - [x] F5 `desktop_app.py` + `main.py`, validado sem Docker
 - [x] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura; cópia feita), comparativo de navegadores
-- [ ] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev, testado na Windows Sandbox
+- [x] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev (falta o teste na Windows Sandbox, que não está habilitado)
 - [ ] F8 Botão para checar o preço de novo nos itens, workflow multiplataforma + GitHub Release + `README-EXE.md` (novo, o `README.md` atual fica)
 - [ ] F9 Atualizações, bandeja (opcional), configurações

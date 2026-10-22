@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from .db_client import get_last_full_check, set_last_full_check
 from .worker_tasks import schedule_all_products
@@ -51,8 +52,9 @@ def start() -> None:
     scheduler = BackgroundScheduler(timezone=timezone.utc)
     scheduler.add_job(
         run_full_check,
-        "interval",
-        seconds=int(CHECK_INTERVAL.total_seconds()),
+        # Objeto do gatilho, não o texto "interval": o APScheduler resolve textos
+        # por entry points do pacote, que o PyInstaller não leva para o executável
+        IntervalTrigger(seconds=int(CHECK_INTERVAL.total_seconds()), timezone=timezone.utc),
         next_run_time=first_run,
         id=_JOB_ID,
         max_instances=1,
