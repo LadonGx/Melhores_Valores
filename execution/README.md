@@ -15,7 +15,9 @@ Houses the entire Python backend in a single process: FastAPI server, background
 
 | File | Role | Modify when |
 |---|---|---|
-| `web_server.py` | FastAPI routes | Adding/changing API endpoints |
+| `launcher.py` | Desktop entry point (`main.py`) | Changing startup, port, instance lock, logging |
+| `desktop_app.py` | Root app: `/api` + SPA | Changing how API/frontend are served |
+| `web_server.py` | FastAPI routes (served under `/api` in the desktop app) | Adding/changing API endpoints |
 | `worker_tasks.py` | Price pipeline + `@task` definitions | Adding background tasks |
 | `task_runner.py` | Thread-pool queue (`.delay()`) | Changing concurrency/queue behavior |
 | `scheduler.py` | APScheduler 6h check + catch-up | Changing the schedule |

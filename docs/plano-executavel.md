@@ -3,6 +3,8 @@
 > Base: [guia para transformar em executável](Melhores%20Valores%20guia%20para%20transformar%20em%20execut%C3%A1vel.md) + leitura do código atual.
 > Objetivo: o usuário baixa um `.exe` (e builds para macOS/Linux), abre, e tem o app completo rodando localmente, **sem Docker, PostgreSQL, Redis ou Celery**, com as mesmas funcionalidades de hoje.
 
+> **Escopo (confirmado):** a versão web/servidor continua normalmente na `main` e não é alterada. A `exe` é uma versão à parte para testar o executável, que vai para **poucas pessoas** testarem. Cada testador começa **zerado**: banco vazio criado na primeira abertura, sem nenhum dado nem chave do desenvolvedor. Os dados da versão web **nunca são alterados**; para testes, eles só podem ser **copiados** (ver Fase 6).
+
 ---
 
 ## 1. Princípio que guia todas as fases
@@ -199,29 +201,42 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 **Pronto quando:** sem Docker, `POST /monitor/add` grava o preço, `POST /search` + `GET /search/{id}` devolvem resultados, e o job de 6h aparece no log. ✅
 
 ---
-### Fase 5: App único (backend + frontend num processo)
+### Fase 5: App único (backend + frontend num processo) ✅
 
 **Objetivo:** `python main.py` abre o app completo no navegador.
 
-- [ ] `execution/desktop_app.py`:
+- [x] `execution/desktop_app.py` (`create_app(web_dist)`):
   - `root = FastAPI(lifespan=web_server.lifespan)`: reaproveita o lifespan da Fase 4 (agendador + `task_runner`).
   - `root.mount("/api", web_server.app)`: rotas atuais intactas.
-  - SPA: servir `web_dist/` e, para qualquer caminho que não seja arquivo, devolver `index.html` (o `StaticFiles(html=True)` sozinho não faz esse fallback, então `/products` daria 404 num F5).
-- [ ] `main.py` (raiz):
-  - **Instância única:** se o app já está rodando, só abre o navegador na porta existente e sai (porta gravada em `DATA_DIR/app.lock` / testada via `GET /api/`).
-  - **Porta:** tenta `8000`; se estiver ocupada, pede uma livre ao sistema.
-  - `uvicorn.run(root, host="127.0.0.1", port=...)` (nunca `0.0.0.0`).
-  - `webbrowser.open(...)` assim que o health check responder (em vez de esperar um tempo fixo).
-  - Logs em arquivo rotativo em `DATA_DIR/logs/` (no `.exe` com `--noconsole` não existe terminal).
-- [ ] Script `pnpm build:desktop` (ou passo no build) que gera `apps/web/dist` e copia para onde o `desktop_app` espera.
+  - SPA (`SPAStaticFiles`): serve `apps/web/dist` (ou `web_dist/` no executável) e devolve o `index.html` para rotas do React Router. Caminho com extensão que não existe (ex: `/assets/x.js`) continua 404. O `index.html` vai com `Cache-Control: no-cache`, para o navegador pegar os assets novos depois de uma atualização.
+  - Sem build do frontend: as páginas mostram como buildar (503) e a API continua respondendo em `/api`.
+- [x] `main.py` (raiz) → `execution/launcher.py` (a lógica fica no pacote, que dá para testar):
+  - **Instância única:** `DATA_DIR/app.lock` guarda `{pid, port}`; uma 2ª abertura confere `GET /api/` nessa porta e, se for o app, só abre o navegador e sai (~0,3 s). Lock antigo (app morto à força) é ignorado.
+  - **Porta estável, não a 8000:** padrão **47290** (fora das portas comuns de dev e abaixo da faixa efêmera do Windows), e a última porta usada fica em `DATA_DIR/port` e é preferida nas próximas aberturas; `--port` sobrescreve. *Motivo:* o frontend guarda dados no `localStorage` (grupos de produtos, filtros do dashboard, estado do Zustand), que é separado por origem (host + porta). Nesta máquina a 8000 já estava ocupada, o app caiu numa porta aleatória e, na abertura seguinte, cairia em outra, e os grupos iriam "sumir".
+  - Se a porta estiver ocupada (testado por conexão, porque no Windows o `bind` em 127.0.0.1 pode "funcionar" com outro programa em 0.0.0.0), usa uma livre. O socket já vinculado vai direto para o uvicorn (`server.run(sockets=[sock])`), sem corrida entre testar e usar.
+  - Escuta só em `127.0.0.1`.
+  - Abre o navegador assim que `GET /api/` responder (`--no-browser` desliga).
+  - Logs: `DATA_DIR/logs/app.log` rotativo (1 MB × 3) + console; `httpx` em WARNING. No `.exe` sem console, `stdout`/`stderr` `None` viram `devnull`.
+- [x] ~~Script `pnpm build:desktop`~~: não foi preciso. Em dev o `desktop_app` lê direto `apps/web/dist` (saída do `pnpm build`), e no executável o PyInstaller empacota essa pasta como `web_dist/` (`settings.WEB_DIST_DIR`, sobrescrevível por `MV_WEB_DIST`).
 - [x] Remover `Dockerfile` e `docker-compose.yml` da branch `exe` (feito na Fase 4).
+- [x] Testes: `test_desktop_app.py` (12, requisições ASGI diretas: SPA, fallback, assets, 404, `/api`, sem build) e `test_launcher.py` (28: health com servidor HTTP real, lock, porta estável, porta ocupada, navegador, 2ª abertura, log em arquivo). Total: 212.
 
-**Pronto quando:** numa máquina com Python, mas **sem Docker/Postgres/Redis rodando**, `python main.py` abre o navegador, e dá para adicionar produto, ver histórico, buscar, pausar, renomear, remover e dar F5 em `/products` e `/search`.
+**Validação real** (`python main.py --no-browser`, pasta de dados descartável, Firecrawl desligado; navegador do app):
+- Dashboard, Produtos e Buscar renderizaram servidos pelo próprio app, sem erros no console. A navegação direta (F5) em `/products` e `/search` devolveu a página. `/api/*` devolveu JSON.
+- Busca pela interface: `POST /api/search` → tarefa em background → a tela mostrou o aviso "Mercado Livre está temporariamente exigindo login" (as lojas seguiam bloqueando o scraping nesta rodada).
+- Adicionar URL pela interface: `POST /api/monitor/add` → 200 → a tarefa em background cadastrou o produto, que apareceu na lista com a data local certa.
+- 2ª abertura detectou a instância e saiu em ~0,3 s.
+- Não foram exercitados nesta rodada (as lojas bloquearam o scraping): preço real, histórico com pontos, pausar/renomear/remover pela UI. As rotas correspondentes foram validadas na Fase 2.
+
+**Decisões para a Fase 7, levantadas aqui:**
+- ~~**Como o usuário fecha o app?**~~ **Decidido:** janela própria com o comportamento padrão de qualquer `.exe` (minimizar, restaurar, fechar). Fechar a janela encerra o app. Implementação na Fase 7 (`pywebview`).
+- **Grupos de produtos no `localStorage`:** com a porta estável o risco caiu, mas os grupos ainda (1) não entram no backup do banco, (2) somem se o usuário limpar os dados do navegador ou trocar de navegador. Vale mover os grupos para o SQLite (tabela + rotas). Isso muda o frontend, então fica como tarefa própria.
+
+**Pronto quando:** numa máquina com Python, mas **sem Docker/Postgres/Redis rodando**, `python main.py` abre o navegador, e dá para adicionar produto, ver histórico, buscar, pausar, renomear, remover e dar F5 em `/products` e `/search`. ✅ (com a ressalva acima sobre o que dependia das lojas)
 
 > Este é o marco principal. Daqui em diante é empacotamento.
 
 ---
-
 ### Fase 6: Playwright e Firecrawl opcionais
 
 **Objetivo:** o app funciona em qualquer máquina, mesmo sem Chromium baixado e sem chave do Firecrawl.
@@ -234,6 +249,7 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 - [ ] Download do Chromium sob demanda (opcional na v1): rodar o driver embutido do Playwright (`playwright install chromium`) apontando para `BROWSERS_DIR`, disparado por uma ação explícita do usuário, nunca em silêncio.
 - [ ] Firecrawl: já é ignorado sem chave. Documentar `FIRECRAWL_API_KEY` no `config.env` do usuário. **Nunca** embutir chave no build.
 - [ ] Opcional: `GET /api/system/status` informando qual navegador está em uso e se o Firecrawl está configurado, para a UI mostrar isso depois.
+- [ ] **Ferramenta de dev: copiar os dados da versão web para testes** (`scripts/copy_web_data.py`). Lê o Postgres da versão web (subido pelo `docker-compose` da `main`) **só com SELECT**, e grava num SQLite **novo** numa pasta escolhida (ex: `MV_DATA_DIR=.data/copia-web`), nunca na pasta padrão do app nem por cima de um banco existente. Copia `Product`, `PriceHistory` e, opcionalmente, `SearchResult`, mantendo ids e datas (convertidas para o formato ISO UTC do `db_client`). Não entra no executável; serve para você e para as validações terem dados reais.
 
 **Pronto quando:** com Edge, sem Chromium do Playwright e sem chave do Firecrawl, um produto que exige JS (nível 2) é capturado.
 
@@ -243,12 +259,20 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 
 **Objetivo:** pasta `dist/MelhoresValores/` com `MelhoresValores.exe` que roda numa máquina limpa.
 
+- [ ] **Janela nativa (decidido: comportamento padrão de `.exe`: minimizar, restaurar, fechar)** com `pywebview`, que no Windows usa o Edge WebView2, já presente no Windows 10/11. Pode ser validada com `python main.py` antes do PyInstaller:
+  - O uvicorn roda numa thread; a janela (`webview.create_window` apontando para `http://127.0.0.1:<porta>/`) fica na thread principal. **Fechar a janela** para o uvicorn, e o `lifespan` desliga agendador e fila.
+  - **`private_mode=False` + `storage_path=<pasta de dados>/webview`**: o padrão do pywebview é modo privado, que apagaria o `localStorage` (grupos, filtros) a cada abertura.
+  - 2ª abertura: em vez de abrir o navegador, pede à instância aberta para trazer a janela para frente (rota local só do `desktop_app`, fora de `/api`).
+  - `--browser` (dev) mantém o modo atual, que abre no navegador padrão.
+  - Título "Melhores Valores", ícone, tamanho mínimo, e lembrar tamanho/posição da janela (opcional).
+  - Sem WebView2 (Windows antigo): mensagem explicando como instalar, ou cair para o navegador padrão.
+- [ ] **Executável sem dados do dev:** o `.spec` não pode incluir `.env`, `*.db` nem `.data/`. O `settings.py` já não carrega o `.env` do repo quando `is_frozen()` (feito, com teste). Conferir na Windows Sandbox que a 1ª abertura cria um banco vazio e que não há chave do Firecrawl configurada.
 - [ ] `packaging/melhores_valores.spec` (versionado, em vez de linha de comando):
   - `--onedir` (abre mais rápido e gera menos alerta de antivírus que `--onefile`).
-  - `datas`: `apps/web/dist` → `web_dist`.
+  - `datas`: `apps/web/dist` → `web_dist` (é onde `settings.WEB_DIST_DIR` procura quando `is_frozen()`).
   - `hiddenimports`: submódulos do `uvicorn` (`uvicorn.logging`, `uvicorn.loops.auto`, `uvicorn.protocols.http.auto`, ...) e `apscheduler`. `lxml` e `playwright` têm hooks no `pyinstaller-hooks-contrib`.
   - Inclui o driver do Playwright, mas **não** os navegadores.
-  - `console=False` e ícone.
+  - `console=False` e ícone (a janela é a do `pywebview`, não um terminal).
 - [ ] `scripts/build_desktop.ps1` (e `.sh`): `pnpm build` → `pyinstaller packaging/melhores_valores.spec`.
 - [ ] Testar na **Windows Sandbox** (vem no Windows 11 Pro e é uma máquina limpa descartável, sem Python/Node/Docker): abrir, adicionar produto, fechar, reabrir e conferir se o histórico continua lá.
 - [ ] Opcional: instalador com Inno Setup (atalho no menu Iniciar, desinstalador).
@@ -259,6 +283,7 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 
 ### Fase 8: Build multiplataforma e distribuição
 
+- [ ] **Botão para checar o preço de novo dentro dos itens** (a checagem automática só roda com o app aberto, então o usuário precisa disparar na hora que quiser). Fica para o final, antes da release. *A definir com você:* hoje a lista de produtos já tem "Atualizar preço" por item (`POST /product/{id}/refresh`). O pedido é (a) levar esse botão também para dentro do modal de detalhes do item, (b) um "Atualizar todos", ou (c) refazer a **busca por nome** de um item?
 - [ ] `.github/workflows/build-desktop.yml`: disparado por tag `v*`, matriz `windows-latest` / `macos-latest` / `ubuntu-latest` (o PyInstaller não faz cross-compile), roda os testes, faz o build e anexa os `.zip` ao **GitHub Release**.
 - [ ] **README novo para a versão .exe, sem substituir o `README.md` atual** (que continua descrevendo a versão servidor/Docker): criar `README-EXE.md` na raiz e linkar a partir do `README.md`. Conteúdo: o que é a versão desktop e como difere da servidor, download pelo GitHub Releases, instalação e primeira execução, aviso do SmartScreen ("Mais informações → Executar assim mesmo"), onde ficam os dados (`%LOCALAPPDATA%\MelhoresValores\`) e como fazer backup, `config.env` (chave opcional do Firecrawl), navegador usado pelo scraping (Edge/Chrome/Chromium), limitações (checagem só com o app aberto), como gerar o build a partir do código e solução de problemas (porta ocupada, logs). Escrito no final, quando o comportamento já estiver fechado.
 - [ ] Versão única em `execution/__init__.py` (`__version__`), usada no build e na checagem de atualização.
@@ -270,8 +295,7 @@ Perder o cache ao fechar o app é aceitável: é só otimização (diretiva `05_
 ### Fase 9: Pós-v1 (melhorias, fora do escopo inicial)
 
 - Checagem de nova versão na abertura (API do GitHub Releases), com aviso na UI.
-- Ícone na bandeja (`pystray`) para o app continuar rodando e agendando com a janela fechada, mais a opção "iniciar com o sistema".
-- Janela nativa com `pywebview` em vez do navegador.
+- Opcional: ícone na bandeja (`pystray`) para continuar agendando com a janela fechada, mais "iniciar com o sistema". Na v1, fechar a janela encerra o app (decidido).
 - Tela de configurações (chave do Firecrawl, intervalo de checagem, baixar Chromium).
 - Backup/exportação do banco (o banco é um arquivo, então basta copiar).
 
@@ -294,7 +318,8 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 | `sqlite3` + modelos Pydantic | SQLAlchemy | 3 tabelas, acesso já centralizado, zero dependência nova, e os objetos ficam com a mesma "cara" dos do Prisma |
 | Shim `@task` com `.delay()` | Chamar `executor.submit` direto nas rotas | `web_server.py` e testes não mudam |
 | API em `/api` + SPA na raiz | API na raiz + `VITE_API_URL` relativo | Evita a colisão `/products` e `/search` entre SPA e API, e o frontend não muda |
-| Navegador padrão na v1 | `pywebview` / Tauri / Electron | Menos dependências nativas no build; janela própria fica para a F9 |
+| Janela nativa com `pywebview` (decidido na F5) | Navegador padrão / Tauri / Electron | Comportamento padrão de `.exe` (minimizar, restaurar, fechar = sair); reaproveita o WebView2 do Windows, sem embutir um navegador como o Electron |
+| Testador começa zerado | Distribuir com dados de exemplo | Pedido explícito; banco vazio na 1ª abertura e nenhuma chave do dev no build |
 | Edge do sistema primeiro | Embutir Chromium | Evita ~150 MB no Windows |
 | Só modo desktop na branch `exe` | Manter modo servidor e desktop juntos por flag | Manter dois modos dobra a manutenção; o modo servidor continua vivo na `main` |
 
@@ -306,7 +331,7 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 | Diferença de comportamento Postgres → SQLite (NULLs, datas, mediana) | Testes reais do `db_client` (Fase 2) cobrindo exatamente esses casos |
 | Antivírus/SmartScreen bloqueando `.exe` não assinado | `--onedir`, aviso no README; assinatura de código é paga (avaliar depois) |
 | Adapters quebram quando as lojas mudam o HTML | Correções feitas na `main` entram via `git merge main` (arquivos não tocados) + checagem de versão (F9) |
-| Agendamento só com o app aberto | Recuperação na abertura (F4) + bandeja (F9) |
+| Agendamento só com o app aberto | Recuperação na abertura (F4) + botão para checar de novo nos itens (F8) + bandeja opcional (F9) |
 | Termos de uso das lojas | Já existe hoje; distribuir aumenta a exposição. Manter frequência conservadora (6h) |
 
 ## 8. Documentação a atualizar na branch `exe`
@@ -324,8 +349,8 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - [x] F2 `db_client.py` em SQLite + `models.py` + testes reais
 - [x] F3 Cache e status de busca em memória (remoção do pacote `redis` fica para a F4)
 - [x] F4 `task_runner.py` + APScheduler com recuperação na abertura
-- [ ] F5 `desktop_app.py` + `main.py`, validado sem Docker
-- [ ] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional
-- [ ] F7 PyInstaller `--onedir`, testado na Windows Sandbox
-- [ ] F8 Workflow multiplataforma + GitHub Release + `README-EXE.md` (novo, o `README.md` atual fica)
-- [ ] F9 Atualizações, bandeja, pywebview, configurações
+- [x] F5 `desktop_app.py` + `main.py`, validado sem Docker
+- [ ] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura)
+- [ ] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev, testado na Windows Sandbox
+- [ ] F8 Botão para checar o preço de novo nos itens, workflow multiplataforma + GitHub Release + `README-EXE.md` (novo, o `README.md` atual fica)
+- [ ] F9 Atualizações, bandeja (opcional), configurações

@@ -32,9 +32,17 @@ pnpm dev
 pnpm build
 ```
 
-### Backend (single process — no Docker, Redis or Celery)
+### Desktop app (API + built frontend on one port)
 ```bash
+pnpm build                       # builds apps/web/dist (served by the app)
 pip install -r requirements.txt
+python main.py                   # opens the browser at http://127.0.0.1:47290/
+python main.py --no-browser --port 9000
+```
+API under `/api`, SPA at `/`. Single instance (`app.lock`); the port is kept stable across launches (`port` file) because the frontend keeps data in `localStorage`. Logs: `<data dir>/logs/app.log`.
+
+### Backend only (dev, with `pnpm dev` proxying `/api` → 8000)
+```bash
 uvicorn execution.web_server:app --host 127.0.0.1 --port 8000 --reload
 ```
 One process runs everything: the API, background tasks (`task_runner`, 2 threads) and the 6h scheduler (`scheduler`, started by the `lifespan` in `web_server.py`).
@@ -45,7 +53,7 @@ SQLite file created automatically on first access, in the user data dir
 Schema changes: append a new entry to `MIGRATIONS` in `execution/db_schema.py` (versioned by `PRAGMA user_version`).
 
 > Branch `exe` is migrating to a single-process desktop app — see `docs/plano-executavel.md`.
-> Done: SQLite (Phase 2), in-memory cache (Phase 3), threads + APScheduler (Phase 4). Still pending: single entry point serving the frontend (Phase 5), packaging.
+> Done: SQLite (Phase 2), in-memory cache (Phase 3), threads + APScheduler (Phase 4), single entry point serving the frontend (Phase 5). Still pending: optional Playwright/Firecrawl (6), PyInstaller (7), release + `README-EXE.md` (8).
 
 ## Architecture
 
@@ -56,6 +64,8 @@ The system follows a **3-layer architecture** (documented in `.agents/workflows/
 3. **Execution** (`execution/`) — Deterministic, focused modules (scrapers, adapters, cache, db)
 
 ### Runtime (one process)
+- **Entry point**: `main.py` → `execution/launcher.py` (single instance, stable port, browser, file logs)
+- **Root app**: `execution/desktop_app.py` — mounts the API at `/api` and serves `apps/web/dist` with SPA fallback
 - **API**: FastAPI (`web_server.py`), bound to `127.0.0.1`
 - **Background tasks**: `task_runner.py` — thread pool (2 workers) with a Celery-like `@task` / `.delay()` / `self.request.id` interface
 - **Scheduler**: `scheduler.py` — APScheduler runs `schedule_all_products()` every 6h, anchored to the last full check stored in `AppMeta` (catch-up 1 min after start if overdue)
@@ -99,7 +109,9 @@ GET /search/{search_id} → retrieve results ordered by price ASC
 | `execution/db_client.py` | **Only** place DB is accessed — SQLite (`sqlite3`) CRUD operations |
 | `execution/db_schema.py` | DB schema + migrations: `Product`, `PriceHistory`, `SearchResult` |
 | `execution/models.py` | Pydantic models returned by `db_client` (same field names the Prisma models had) |
-| `execution/settings.py` | User data dir, DB path, `.env`/`config.env` loading |
+| `execution/settings.py` | User data dir, DB/log/lock/port paths, web dist location, `.env`/`config.env` loading |
+| `execution/desktop_app.py` | Root ASGI app: `/api` → `web_server.app`, `/` → SPA (`SPAStaticFiles`) |
+| `execution/launcher.py` | Desktop entry point (`main.py`): instance lock, port, browser, logging |
 | `execution/scraping_orchestrator.py` | 3-level cascade scraping strategy |
 | `execution/search_orchestrator.py` | Multi-store search coordination |
 | `execution/cache_manager.py` | In-memory TTL cache (`memory_cache`, thread-safe) with SHA256 URL keys — replaces Redis |

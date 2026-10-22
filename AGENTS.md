@@ -41,7 +41,9 @@ Execution (execution/)           ← Deterministic modules (scrapers, adapters, 
 
 ```
 execution/
-  web_server.py          ← FastAPI routes (port 8000)
+  launcher.py            ← Desktop entry point (main.py): instance lock, stable port, browser, logs
+  desktop_app.py         ← Root app: /api → web_server.app, / → built frontend (SPA fallback)
+  web_server.py          ← FastAPI routes (mounted at /api in the desktop app)
   worker_tasks.py        ← Price pipeline + background tasks (@task)
   task_runner.py         ← Thread-pool task queue (.delay(), self.request.id)
   scheduler.py           ← APScheduler: full check every 6h + catch-up on start

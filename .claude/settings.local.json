@@ -16,7 +16,9 @@
       "Bash(docker-compose up *)",
       "Bash(Get-ChildItem -Recurse -Force)",
       "Bash(Select-Object -Property FullName, PSIsContainer)",
-      "Bash(ConvertTo-Json)"
+      "Bash(ConvertTo-Json)",
+      "PowerShell(python -m pytest execution/tests -q 2>&1)",
+      "PowerShell(pnpm build 2>&1)"
     ]
   }
 }

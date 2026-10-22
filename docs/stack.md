@@ -122,3 +122,9 @@
 ## Runtime
 
 No Docker, Redis or Celery: API, background tasks, scheduler, cache and SQLite all run in one Python process.
+
+- Entry: `python main.py` → `execution/launcher.py`
+- Root app `execution/desktop_app.py`: `/api` → `web_server.app`, `/` → `apps/web/dist` (SPA fallback, `index.html` with `Cache-Control: no-cache`)
+- Port: 47290 by default, then the last used port (`<data dir>/port`); `--port` overrides. Must stay stable: `localStorage` is per origin
+- Single instance via `<data dir>/app.lock` + `GET /api/` health check
+- Logs: `<data dir>/logs/app.log` (rotating, 1 MB × 3)
