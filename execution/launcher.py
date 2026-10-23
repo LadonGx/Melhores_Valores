@@ -23,6 +23,7 @@ import urllib.request
 import webbrowser
 from logging.handlers import RotatingFileHandler
 
+from . import __version__
 from .settings import LOCK_PATH, LOG_DIR, PORT_PATH, WEBVIEW_DIR
 
 HOST = "127.0.0.1"
@@ -268,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     port = sock.getsockname()[1]
     write_lock(port)
     save_port(port)
-    logger.info("Melhores Valores rodando em http://%s:%d/ (modo: %s)", HOST, port, mode)
+    logger.info("Melhores Valores %s rodando em http://%s:%d/ (modo: %s)", __version__, HOST, port, mode)
 
     server = uvicorn.Server(uvicorn.Config(app, log_config=None, access_log=False))
     try:

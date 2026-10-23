@@ -1,4 +1,8 @@
 import logging
+import threading
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
@@ -10,6 +14,7 @@ from .db_client import (
     get_last_valid_price_for_url,
     get_or_create_product,
     is_garbage_name as _is_garbage_name,
+    set_last_full_check,
 )
 from .scraping_orchestrator import scrape_product
 from .search_orchestrator import run_product_search
@@ -221,10 +226,14 @@ def process_price_check(
     store: str,
     fallback_name: str | None = None,
     fallback_image: str | None = None,
+    skip_cache: bool = False,
 ) -> dict[str, Any]:
     """Executa o pipeline de checagem com logs estruturados."""
     try:
-        return run_price_pipeline(url=url, store=store, fallback_name=fallback_name, fallback_image=fallback_image)
+        return run_price_pipeline(
+            url=url, store=store, fallback_name=fallback_name,
+            fallback_image=fallback_image, skip_cache=skip_cache,
+        )
     except Exception as exc:
         logger.exception("Erro no pipeline de preço. url=%s store=%s", url, store)
         return {
@@ -235,28 +244,114 @@ def process_price_check(
         }
 
 
+# ─────────────────────────────────────────────
+# Checagem completa em lote (automática de 6 h e botão "Atualizar todos")
+# ─────────────────────────────────────────────
+
+@dataclass
+class RefreshBatch:
+    """Progresso da checagem completa em andamento (ou da última). Fica só em memória."""
+    id: str
+    trigger: str                 # "agendada" | "manual"
+    total: int
+    started_at: datetime
+    done: int = 0
+    ok: int = 0
+    failed: int = 0
+    finished_at: datetime | None = None
+
+    @property
+    def running(self) -> bool:
+        return self.finished_at is None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "running": self.running,
+            "trigger": self.trigger,
+            "total": self.total,
+            "done": self.done,
+            "ok": self.ok,
+            "failed": self.failed,
+            "started_at": self.started_at.isoformat(),
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+        }
+
+
+_batch: RefreshBatch | None = None
+_batch_lock = threading.Lock()
+
+
+def refresh_status() -> dict[str, Any] | None:
+    """Progresso da checagem completa atual/última, ou None se nenhuma rodou desde que o app abriu."""
+    with _batch_lock:
+        return _batch.as_dict() if _batch else None
+
+
 @task
-def schedule_all_products() -> dict[str, Any]:
-    """Reenfileira todos os produtos cadastrados para nova checagem."""
-    products = get_all_products()
-    scheduled = 0
+def _check_batch_item(
+    batch_id: str,
+    url: str,
+    store: str,
+    fallback_name: str | None,
+    fallback_image: str | None,
+    skip_cache: bool,
+) -> dict[str, Any]:
+    result = process_price_check(url, store, fallback_name, fallback_image, skip_cache)
+    # "ok" ou fora de estoque confirmado contam como checagem bem-sucedida
+    succeeded = result.get("status") in ("ok", "out_of_stock")
+    with _batch_lock:
+        if _batch is not None and _batch.id == batch_id:
+            _batch.done += 1
+            if succeeded:
+                _batch.ok += 1
+            else:
+                _batch.failed += 1
+            if _batch.done >= _batch.total:
+                _batch.finished_at = datetime.now(timezone.utc)
+                logger.info(
+                    "Checagem completa (%s) concluída | ok=%d falhas=%d",
+                    _batch.trigger, _batch.ok, _batch.failed,
+                )
+    return result
+
+
+def schedule_all_products(skip_cache: bool = False, trigger: str = "agendada") -> dict[str, Any]:
+    """
+    Reenfileira todos os produtos ativos para nova checagem, na fila de lote
+    (as ações do usuário seguem na fila própria, sem esperar). Se já houver uma
+    checagem completa em andamento, não duplica: devolve o progresso dela.
+
+    skip_cache=True no "Atualizar todos": quem clica quer o preço de agora, não
+    o que ficou no cache de 2 h.
+    """
+    global _batch
+    with _batch_lock:
+        if _batch is not None and _batch.running:
+            return {"status": "already_running", "scheduled_products": 0, "batch": _batch.as_dict()}
+
+        products = [
+            p for p in get_all_products()
+            # Monitoramento pausado pelo usuário (ex: anúncio fora de estoque) — não reenfileira.
+            if p.url and p.store and getattr(p, "status", "active") != "paused"
+        ]
+        now = datetime.now(timezone.utc)
+        _batch = RefreshBatch(id=str(uuid.uuid4()), trigger=trigger, total=len(products), started_at=now)
+        if not products:
+            _batch.finished_at = now
+        batch_id = _batch.id
 
     for product in products:
-        if not product.url or not product.store:
-            continue
-        if getattr(product, "status", "active") == "paused":
-            # Monitoramento pausado pelo usuário (ex: anúncio fora de estoque) — não reenfileira.
-            continue
-
         # Passa nome e imagem atuais como fallback para que re-checagens não sobrescrevam com lixo
-        process_price_check.delay(product.url, product.store, product.name, product.imageUrl)
-        scheduled += 1
+        _check_batch_item.apply_async(
+            (batch_id, product.url, product.store, product.name, product.imageUrl, skip_cache),
+            queue="background",
+        )
 
-    return {
-        "status": "ok",
-        "scheduled_products": scheduled,
-    }
-
+    # Uma checagem completa manual também conta para o ritmo de 6 h do agendador
+    set_last_full_check(now)
+    logger.info("Checagem completa (%s) iniciada | produtos=%d", trigger, len(products))
+    return {"status": "ok", "scheduled_products": len(products), "batch": refresh_status()}
 
 # O agendamento a cada 6h (antigo Celery Beat) fica em scheduler.py.
 

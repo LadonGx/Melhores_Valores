@@ -6,6 +6,8 @@ import { Modal } from '@/components/Modal';
 import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
+import { RefreshAllButton } from '@/features/products/components/RefreshAllButton';
+import { describeRefreshError, describeRefreshResult } from '@/features/products/refreshMessages';
 import {
   useProducts,
   useRefreshPrice,
@@ -147,17 +149,7 @@ export function Products() {
           return next;
         });
 
-        if (result.status === 'ok') {
-          const priceStr = result.price != null ? formatCurrency(result.price) : '—';
-          const stockStr = result.in_stock === false ? ' · Sem estoque' : '';
-          setToast({
-            message: `Preço atualizado: ${priceStr}${stockStr}`,
-            type: 'success',
-          });
-        } else {
-          // Specific error messages based on what went wrong
-          setToast({ message: result.detail, type: 'error' });
-        }
+        setToast(describeRefreshResult(result));
       },
       onError: (err) => {
         setRefreshingIds((prev) => {
@@ -165,15 +157,7 @@ export function Products() {
           next.delete(product.id);
           return next;
         });
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.toLowerCase().includes('timeout')) {
-          setToast({
-            message: 'Tempo esgotado ao buscar preço. O site pode estar lento. Tente novamente.',
-            type: 'error',
-          });
-        } else {
-          setToast({ message: `Erro ao atualizar preço: ${msg}`, type: 'error' });
-        }
+        setToast(describeRefreshError(err));
       },
     });
   };
@@ -252,6 +236,7 @@ export function Products() {
         title={`Produtos monitorados${data ? ` (${data.total})` : ''}`}
         action={
           <div className={styles.actions}>
+            <RefreshAllButton />
             <Button variant="secondary" size="sm" onClick={() => setModal('search')}>
               Buscar por nome
             </Button>

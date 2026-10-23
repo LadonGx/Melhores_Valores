@@ -150,3 +150,18 @@ export type RefreshPriceResponse =
   | { status: 'ok'; price: number; in_stock: boolean; name: string | null; source: string }
   | { status: 'out_of_stock'; in_stock: false; detail: string }
   | { status: 'error'; reason: 'unavailable' | 'blocked' | 'scraping_failed' | 'exception'; detail: string };
+
+/** Progresso da checagem completa (botão "Atualizar todos" ou a automática de 6 h). */
+export interface RefreshAllStatus {
+  running: boolean;
+  total: number;
+  done: number;
+  ok: number;
+  failed: number;
+  id?: string;
+  trigger?: 'manual' | 'agendada';
+  started_at?: string;
+  finished_at?: string | null;
+  /** Só na resposta do POST: false quando já havia uma checagem em andamento. */
+  started?: boolean;
+}

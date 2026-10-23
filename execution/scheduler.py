@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from .db_client import get_last_full_check, set_last_full_check
+from .db_client import get_last_full_check
 from .worker_tasks import schedule_all_products
 
 logger = logging.getLogger(__name__)
@@ -35,10 +35,14 @@ def next_full_check_at(last: datetime | None, now: datetime) -> datetime:
 
 
 def run_full_check() -> dict:
-    """Reenfileira todos os produtos ativos e registra o horário da rodada."""
-    result = schedule_all_products()
-    set_last_full_check(datetime.now(timezone.utc))
-    logger.info("Checagem completa disparada | produtos=%s", result.get("scheduled_products"))
+    """Reenfileira todos os produtos ativos (o horário da rodada é gravado por
+    schedule_all_products). Se o usuário já disparou "Atualizar todos" e ele
+    ainda está rodando, não duplica."""
+    result = schedule_all_products(trigger="agendada")
+    if result["status"] == "already_running":
+        logger.info("Checagem completa agendada pulada: já há uma em andamento")
+    else:
+        logger.info("Checagem completa disparada | produtos=%s", result.get("scheduled_products"))
     return result
 
 

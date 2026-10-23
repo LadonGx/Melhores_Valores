@@ -14,10 +14,12 @@ from .db_client import (
     get_product_by_id, get_products_with_history,
     get_search_results, update_product_name, update_product_status,
 )
-from . import scheduler, task_runner
+from . import __version__, scheduler, task_runner
 from .search_status import get_search_warnings
 from .store_detection import detect_store_from_url
-from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
+from .worker_tasks import (
+    process_price_check, refresh_status, run_price_pipeline, schedule_all_products, task_search_products,
+)
 
 
 def _normalize_url(url: str) -> str:
@@ -153,6 +155,24 @@ async def get_group_stats(ids: str):
     return get_group_price_stats(product_ids)
 
 
+@app.post("/products/refresh-all")
+def refresh_all_products():
+    """
+    Botão "Atualizar todos": checa de novo todos os produtos ativos agora, sem
+    usar o cache. Roda em background (fila de lote); acompanhe o progresso em
+    GET /products/refresh-all. Se já houver uma checagem completa rodando
+    (inclusive a automática de 6 h), não duplica e devolve o progresso dela.
+    """
+    result = schedule_all_products(skip_cache=True, trigger="manual")
+    return {"started": result["status"] == "ok", **result["batch"]}
+
+
+@app.get("/products/refresh-all")
+def get_refresh_all_status():
+    """Progresso da checagem completa atual (ou da última desde que o app abriu)."""
+    return refresh_status() or {"running": False, "total": 0, "done": 0, "ok": 0, "failed": 0}
+
+
 @app.delete("/product/{product_id}")
 async def remove_product(product_id: str):
     """Remove um produto e seu histórico de preços do monitoramento."""
@@ -229,7 +249,7 @@ async def refresh_product_price(product_id: str):
 
 @app.get("/")
 async def health_check():
-    return {"status": "ok", "message": "Price Tracker API is running"}
+    return {"status": "ok", "message": "Price Tracker API is running", "version": __version__}
 
 
 @app.post("/monitor/add")

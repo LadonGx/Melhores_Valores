@@ -7,6 +7,7 @@ import type {
   ProductStatus,
   ProductWithHistory,
   PromotionsResponse,
+  RefreshAllStatus,
   RefreshPriceResponse,
 } from '@mv/types';
 import { api } from './api';
@@ -77,6 +78,16 @@ export const productsService = {
       {},
       { timeout: 60_000 },
     );
+    return data;
+  },
+
+  startRefreshAll: async (): Promise<RefreshAllStatus> => {
+    const { data } = await api.post<RefreshAllStatus>('/products/refresh-all');
+    return data;
+  },
+
+  getRefreshAllStatus: async (): Promise<RefreshAllStatus> => {
+    const { data } = await api.get<RefreshAllStatus>('/products/refresh-all');
     return data;
   },
 

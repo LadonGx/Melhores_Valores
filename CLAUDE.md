@@ -62,7 +62,7 @@ SQLite file created automatically on first access, in the user data dir
 Schema changes: append a new entry to `MIGRATIONS` in `execution/db_schema.py` (versioned by `PRAGMA user_version`).
 
 > Branch `exe` is migrating to a single-process desktop app — see `docs/plano-executavel.md`.
-> Done: SQLite (2), in-memory cache (3), threads + APScheduler (4), single entry point serving the frontend (5), system Edge/Chrome for Playwright + web-data copy script (6), native window + PyInstaller (7; Windows Sandbox test pending). Pending: re-check button + release + `README-EXE.md` (8).
+> Phases 0–8 done (see `docs/plano-executavel.md`); end-user docs in `README-EXE.md`. Next: Phase 9 (post-v1 ideas).
 > Rules: `main` (web version) is untouched; testers start with an empty DB; the frozen build never loads the repo `.env`; web data may only be **copied** (`scripts/copy_web_data.py`, read-only).
 
 ## Architecture
@@ -77,8 +77,9 @@ The system follows a **3-layer architecture** (documented in `.agents/workflows/
 - **Entry point**: `main.py` → `execution/launcher.py` (single instance, stable port, browser, file logs)
 - **Root app**: `execution/desktop_app.py` — mounts the API at `/api` and serves `apps/web/dist` with SPA fallback
 - **API**: FastAPI (`web_server.py`), bound to `127.0.0.1`
-- **Background tasks**: `task_runner.py` — thread pool (2 workers) with a Celery-like `@task` / `.delay()` / `self.request.id` interface
+- **Background tasks**: `task_runner.py` — two thread pools (2 workers each): `user` (default, `.delay()`: searches, adding products) and `background` (`.apply_async(..., queue="background")`: batch checks), with a Celery-like `@task` / `self.request.id` interface
 - **Scheduler**: `scheduler.py` — APScheduler runs `schedule_all_products()` every 6h, anchored to the last full check stored in `AppMeta` (catch-up 1 min after start if overdue)
+- **Full check batch**: `schedule_all_products()` (`worker_tasks.py`) is shared by the scheduler and the "Atualizar todos" button (`POST/GET /api/products/refresh-all`); one batch at a time, progress kept in memory
 - **Cache**: in-memory `memory_cache` (`cache_manager.py`)
 - **DB**: SQLite file in the user data dir
 

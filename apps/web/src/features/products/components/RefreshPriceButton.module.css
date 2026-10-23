@@ -1,0 +1,16 @@
+.wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.success {
+  font-size: 13px;
+  color: var(--color-success);
+}
+
+.error {
+  font-size: 13px;
+  color: var(--color-danger);
+}

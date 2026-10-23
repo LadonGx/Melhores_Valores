@@ -5,6 +5,7 @@ import { ConfirmModal } from '@/components/ConfirmModal';
 import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
+import { RefreshAllButton } from '@/features/products/components/RefreshAllButton';
 import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
 import { usePromotions, useProducts, useRemoveProduct } from '@/features/products/hooks/useProducts';
@@ -355,15 +356,18 @@ export function Dashboard() {
       <Card
         title="Produtos monitorados"
         action={
-          <FilterMenu
-            rows={allRows}
-            sortOption={sortOption}
-            hiddenIds={hiddenIds}
-            onSortChange={setSortOption}
-            onToggleHidden={toggleHidden}
-            onShowAll={showAll}
-            onReset={resetFilter}
-          />
+          <div className={styles.cardActions}>
+            <RefreshAllButton />
+            <FilterMenu
+              rows={allRows}
+              sortOption={sortOption}
+              hiddenIds={hiddenIds}
+              onSortChange={setSortOption}
+              onToggleHidden={toggleHidden}
+              onShowAll={showAll}
+              onReset={resetFilter}
+            />
+          </div>
         }
       >
         {/* Selection toolbar */}

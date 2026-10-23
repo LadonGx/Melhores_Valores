@@ -29,15 +29,24 @@ class TestNextFullCheckAt:
 
 
 class TestRunFullCheck:
-    def test_enqueues_products_and_records_time(self):
-        with patch.object(scheduler, "schedule_all_products", return_value={"status": "ok", "scheduled_products": 3}), \
-             patch.object(scheduler, "set_last_full_check") as mock_set:
+    def test_starts_scheduled_batch(self):
+        with patch.object(scheduler, "schedule_all_products",
+                          return_value={"status": "ok", "scheduled_products": 3, "batch": {}}) as mock_schedule:
             result = scheduler.run_full_check()
 
         assert result["scheduled_products"] == 3
-        recorded = mock_set.call_args[0][0]
-        assert recorded.tzinfo is not None
-        assert abs(datetime.now(timezone.utc) - recorded) < timedelta(seconds=5)
+        mock_schedule.assert_called_once_with(trigger="agendada")
+
+    def test_skips_when_a_batch_is_already_running(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="execution.scheduler"), \
+             patch.object(scheduler, "schedule_all_products",
+                          return_value={"status": "already_running", "scheduled_products": 0, "batch": {}}):
+            result = scheduler.run_full_check()
+
+        assert result["status"] == "already_running"
+        assert "pulada" in caplog.text
 
 
 class TestStartShutdown:
@@ -74,7 +83,21 @@ class TestWorkerTasks:
         p.url, p.store, p.status, p.name, p.imageUrl = url, store, status, f"Produto {url}", None
         return p
 
-    def test_schedule_all_products_skips_paused_and_incomplete(self):
+    @pytest.fixture
+    def run_batch_inline(self, monkeypatch):
+        """Executa os itens do lote na hora (sem threads) e registra as chamadas."""
+        calls = []
+
+        def apply_async(args=(), kwargs=None, queue="user"):
+            calls.append((args, queue))
+            worker_tasks._check_batch_item(*args)
+
+        monkeypatch.setattr(worker_tasks._check_batch_item, "apply_async", apply_async)
+        monkeypatch.setattr(worker_tasks, "set_last_full_check", MagicMock())
+        monkeypatch.setattr(worker_tasks, "_batch", None)
+        return calls
+
+    def test_schedule_all_products_skips_paused_and_incomplete(self, run_batch_inline):
         products = [
             self._product("https://a"),
             self._product("https://b", status="paused"),
@@ -82,14 +105,61 @@ class TestWorkerTasks:
             self._product("https://d"),
         ]
         with patch.object(worker_tasks, "get_all_products", return_value=products), \
-             patch.object(worker_tasks.process_price_check, "delay") as mock_delay:
+             patch.object(worker_tasks, "process_price_check", return_value={"status": "ok"}) as mock_check:
             result = worker_tasks.schedule_all_products()
 
-        assert result == {"status": "ok", "scheduled_products": 2}
-        assert [c.args[0] for c in mock_delay.call_args_list] == ["https://a", "https://d"]
+        assert result["status"] == "ok" and result["scheduled_products"] == 2
+        assert [c.args[0] for c in mock_check.call_args_list] == ["https://a", "https://d"]
         # nome atual vai como fallback, para a re-checagem não gravar nome lixo
-        assert mock_delay.call_args_list[0].args[2] == "Produto https://a"
+        assert mock_check.call_args_list[0].args[2] == "Produto https://a"
+        # lotes rodam na fila de lote, nunca na do usuário
+        assert {queue for _, queue in run_batch_inline} == {"background"}
 
+    def test_batch_progress_counts_ok_out_of_stock_and_failures(self, run_batch_inline):
+        products = [self._product(f"https://{i}") for i in range(4)]
+        outcomes = iter([{"status": "ok"}, {"status": "out_of_stock"}, {"status": "error"}, {"status": "ok"}])
+        with patch.object(worker_tasks, "get_all_products", return_value=products), \
+             patch.object(worker_tasks, "process_price_check", side_effect=lambda *a: next(outcomes)):
+            result = worker_tasks.schedule_all_products(trigger="manual")
+
+        batch = worker_tasks.refresh_status()
+        assert batch["running"] is False and batch["finished_at"] is not None
+        assert (batch["total"], batch["done"], batch["ok"], batch["failed"]) == (4, 4, 3, 1)
+        assert batch["trigger"] == "manual"
+        assert result["batch"]["id"] == batch["id"]
+
+    def test_manual_refresh_skips_cache_and_records_full_check(self, run_batch_inline):
+        with patch.object(worker_tasks, "get_all_products", return_value=[self._product("https://a")]), \
+             patch.object(worker_tasks, "process_price_check", return_value={"status": "ok"}) as mock_check:
+            worker_tasks.schedule_all_products(skip_cache=True, trigger="manual")
+
+        assert mock_check.call_args.args[4] is True  # skip_cache
+        worker_tasks.set_last_full_check.assert_called_once()
+
+    def test_running_batch_is_not_duplicated(self, monkeypatch):
+        enqueued = []
+        monkeypatch.setattr(worker_tasks._check_batch_item, "apply_async",
+                            lambda args=(), kwargs=None, queue="user": enqueued.append(args))
+        monkeypatch.setattr(worker_tasks, "set_last_full_check", MagicMock())
+        monkeypatch.setattr(worker_tasks, "_batch", None)
+        with patch.object(worker_tasks, "get_all_products", return_value=[self._product("https://a")]):
+            first = worker_tasks.schedule_all_products(trigger="agendada")
+            second = worker_tasks.schedule_all_products(skip_cache=True, trigger="manual")
+
+        assert first["status"] == "ok"
+        assert second["status"] == "already_running"
+        assert second["batch"]["id"] == first["batch"]["id"] and second["batch"]["trigger"] == "agendada"
+        assert len(enqueued) == 1
+
+    def test_no_active_products_finishes_immediately(self, run_batch_inline):
+        with patch.object(worker_tasks, "get_all_products", return_value=[]):
+            result = worker_tasks.schedule_all_products()
+        assert result["scheduled_products"] == 0
+        assert worker_tasks.refresh_status()["running"] is False
+
+    def test_status_is_none_before_any_batch(self, monkeypatch):
+        monkeypatch.setattr(worker_tasks, "_batch", None)
+        assert worker_tasks.refresh_status() is None
     def test_search_task_uses_its_own_id_as_search_id(self):
         with patch.object(worker_tasks, "run_product_search", side_effect=lambda q, **kw: kw["search_id"]) as mock_search:
             handle = worker_tasks.task_search_products.delay("iphone", 10.0, 500.0)

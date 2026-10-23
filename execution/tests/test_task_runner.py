@@ -45,7 +45,7 @@ class TestTaskDecorator:
         handle = where.delay(42)
         thread_name, value = handle.future.result(timeout=5)
         assert value == 42
-        assert thread_name != caller and thread_name.startswith("mv-task")
+        assert thread_name != caller and thread_name.startswith("mv-user")
         assert len(handle.id) == 36  # uuid4
 
     def test_delay_accepts_kwargs(self):
@@ -125,3 +125,64 @@ class TestPool:
             return "ok"
 
         assert after.delay().future.result(timeout=5) == "ok"
+
+
+class TestQueues:
+    def test_apply_async_runs_on_background_queue(self):
+        @task
+        def where():
+            return threading.current_thread().name
+
+        handle = where.apply_async(queue="background")
+        assert handle.future.result(timeout=5).startswith("mv-background")
+
+    def test_apply_async_passes_args_and_kwargs(self):
+        @task
+        def greet(name, greeting="olá"):
+            return f"{greeting} {name}"
+
+        handle = greet.apply_async(("Ana",), {"greeting": "oi"}, queue="background")
+        assert handle.future.result(timeout=5) == "oi Ana"
+
+    def test_unknown_queue_is_rejected(self):
+        @task
+        def noop():
+            pass
+
+        with pytest.raises(ValueError, match="Fila desconhecida"):
+            noop.apply_async(queue="prioridade")
+
+    def test_user_task_does_not_wait_for_a_busy_background_queue(self):
+        """O motivo das duas filas: busca/adicionar produto não esperam o lote de checagens."""
+        release = threading.Event()
+
+        @task
+        def slow_batch_item():
+            release.wait(5)
+
+        @task
+        def user_action():
+            return "pronto"
+
+        busy = [slow_batch_item.apply_async(queue="background") for _ in range(6)]
+        try:
+            assert user_action.delay().future.result(timeout=2) == "pronto"
+        finally:
+            release.set()
+            for h in busy:
+                h.future.result(timeout=10)
+
+    def test_shutdown_stops_every_queue(self):
+        release = threading.Event()
+
+        @task
+        def blocker():
+            release.wait(5)
+
+        running = [blocker.apply_async(queue="background") for _ in range(task_runner.QUEUES["background"])]
+        queued = blocker.apply_async(queue="background")
+        task_runner.shutdown(wait=False)
+        release.set()
+        assert queued.future.cancelled()
+        for h in running:
+            h.future.result(timeout=5)

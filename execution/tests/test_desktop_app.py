@@ -133,3 +133,31 @@ class TestFocusEndpoint:
         desktop_app.set_focus_handler(lambda: None)
         status, headers, _ = _get(app, "/_desktop/focus", method="POST")
         assert status == 200 and headers["content-type"] == "application/json"
+
+class TestRefreshAllRoutes:
+    def test_status_before_any_batch(self, app, monkeypatch):
+        monkeypatch.setattr(web_server, "refresh_status", lambda: None)
+        status, _, body = _get(app, "/api/products/refresh-all")
+        assert status == 200
+        assert json.loads(body) == {"running": False, "total": 0, "done": 0, "ok": 0, "failed": 0}
+
+    def test_start_is_manual_and_skips_cache(self, app, monkeypatch):
+        calls = []
+        batch = {"id": "b1", "running": True, "trigger": "manual", "total": 3, "done": 0, "ok": 0, "failed": 0}
+
+        def fake_schedule(**kwargs):
+            calls.append(kwargs)
+            return {"status": "ok", "scheduled_products": 3, "batch": batch}
+
+        monkeypatch.setattr(web_server, "schedule_all_products", fake_schedule)
+        status, _, body = _get(app, "/api/products/refresh-all", method="POST")
+        assert status == 200
+        assert json.loads(body) == {"started": True, **batch}
+        assert calls == [{"skip_cache": True, "trigger": "manual"}]
+
+    def test_start_while_running_reports_existing_batch(self, app, monkeypatch):
+        batch = {"id": "b0", "running": True, "trigger": "agendada", "total": 20, "done": 7, "ok": 7, "failed": 0}
+        monkeypatch.setattr(web_server, "schedule_all_products",
+                            lambda **kw: {"status": "already_running", "scheduled_products": 0, "batch": batch})
+        _, _, body = _get(app, "/api/products/refresh-all", method="POST")
+        assert json.loads(body) == {"started": False, **batch}

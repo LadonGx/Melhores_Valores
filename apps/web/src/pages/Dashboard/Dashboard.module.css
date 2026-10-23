@@ -269,3 +269,10 @@
   color: var(--color-text-muted);
   white-space: nowrap;
 }
+
+/* ─── Card header actions (Atualizar todos + filtro) ─── */
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

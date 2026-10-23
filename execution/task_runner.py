@@ -1,5 +1,5 @@
 """
-Fila de tarefas em threads, no lugar do Celery worker.
+Filas de tarefas em threads, no lugar do Celery worker.
 
 Mantém a interface que o resto do código usava do Celery, para que
 web_server.py e worker_tasks.py não precisem mudar:
@@ -26,28 +26,36 @@ from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# Igual ao --concurrency=2 do worker Celery: no máximo 2 scrapings simultâneos
-MAX_WORKERS = 2
+# Duas filas, para uma ação do usuário (adicionar produto, buscar) nunca esperar
+# atrás de uma checagem em lote (20 produtos × até 30 s cada):
+#   "user"       → o que o usuário acabou de pedir e está esperando na tela
+#   "background" → checagens em lote (automática de 6 h e "Atualizar todos")
+# Cada fila tem 2 threads, como o --concurrency=2 do antigo worker Celery.
+QUEUES = {"user": 2, "background": 2}
+DEFAULT_QUEUE = "user"
+MAX_WORKERS = QUEUES[DEFAULT_QUEUE]
 
-_executor: ThreadPoolExecutor | None = None
+_executors: dict[str, ThreadPoolExecutor] = {}
 _executor_lock = threading.Lock()
 
 
-def _get_executor() -> ThreadPoolExecutor:
-    global _executor
+def _get_executor(queue: str = DEFAULT_QUEUE) -> ThreadPoolExecutor:
+    if queue not in QUEUES:
+        raise ValueError(f"Fila desconhecida: {queue!r} (use {', '.join(QUEUES)})")
     with _executor_lock:
-        if _executor is None:
-            _executor = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="mv-task")
-        return _executor
+        if queue not in _executors:
+            _executors[queue] = ThreadPoolExecutor(
+                max_workers=QUEUES[queue], thread_name_prefix=f"mv-{queue}"
+            )
+        return _executors[queue]
 
 
 def shutdown(wait: bool = False) -> None:
-    """Encerra o pool (no fechamento do app). Tarefas ainda na fila são descartadas."""
-    global _executor
+    """Encerra as filas (no fechamento do app). Tarefas ainda na fila são descartadas."""
     with _executor_lock:
-        if _executor is not None:
-            _executor.shutdown(wait=wait, cancel_futures=True)
-            _executor = None
+        for executor in _executors.values():
+            executor.shutdown(wait=wait, cancel_futures=True)
+        _executors.clear()
 
 
 @dataclass(frozen=True)
@@ -91,8 +99,13 @@ class Task:
         return self._run(str(uuid.uuid4()), args, kwargs)
 
     def delay(self, *args: Any, **kwargs: Any) -> TaskHandle:
+        """Enfileira na fila do usuário (a padrão)."""
+        return self.apply_async(args, kwargs)
+
+    def apply_async(self, args: tuple = (), kwargs: dict | None = None, queue: str = DEFAULT_QUEUE) -> TaskHandle:
+        """Como no Celery: permite escolher a fila (`queue="background"` para lotes)."""
         task_id = str(uuid.uuid4())
-        future = _get_executor().submit(self._run_logged, task_id, args, kwargs)
+        future = _get_executor(queue).submit(self._run_logged, task_id, tuple(args), kwargs or {})
         return TaskHandle(id=task_id, future=future)
 
 

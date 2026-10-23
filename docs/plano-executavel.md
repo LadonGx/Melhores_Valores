@@ -97,7 +97,7 @@ Cada fase termina com um critério verificável. **Não começar a próxima sem 
 
 ---
 
-### Fase 1: Configuração e pasta de dados (parcial)
+### Fase 1: Configuração e pasta de dados ✅ (completada ao longo das Fases 5–7)
 
 **Objetivo:** um lugar só para caminhos e configuração, funcionando em dev e no executável.
 
@@ -105,8 +105,8 @@ Novo `execution/settings.py`:
 - [x] `DATA_DIR`: `platformdirs.user_data_dir("MelhoresValores", appauthor=False)`, sobrescrevível pela env `MV_DATA_DIR` (útil em dev e nos testes).
 - [x] `DB_PATH` (sobrescrevível por `MV_DB_PATH`). A pasta é criada pelo `db_client` na primeira conexão, para o import não criar pastas.
 - [x] Carrega `DATA_DIR/config.env` (prioridade) e o `.env` do repo com `python-dotenv`.
-- [ ] `LOG_DIR` e `BROWSERS_DIR` (entram nas Fases 5 e 6).
-- [ ] `is_frozen()`: `getattr(sys, "frozen", False)`, e `resource_path()` para achar o `web_dist` dentro do pacote do PyInstaller (`sys._MEIPASS`) (entra na Fase 5).
+- [x] `LOG_DIR`, `LOCK_PATH`, `PORT_PATH` (F5), `BROWSERS_DIR` (F6), `WEBVIEW_DIR` (F7).
+- [x] `is_frozen()` e `resource_path()` para achar o `web_dist` dentro do pacote do PyInstaller (`sys._MEIPASS`) (F5); no executável, o `.env` do repo nunca é carregado.
 
 **Pronto quando:** `python -c "from execution.settings import DATA_DIR; print(DATA_DIR)"` mostra a pasta e ela é criada.
 
@@ -305,7 +305,7 @@ Conclusões:
 **Pronto quando:** com Edge, sem Chromium do Playwright e sem chave do Firecrawl, um produto que exige JS (nível 2) é capturado. ✅
 
 ---
-### Fase 7: Janela nativa e empacotamento com PyInstaller ✅ (falta só o teste na Windows Sandbox)
+### Fase 7: Janela nativa e empacotamento com PyInstaller ✅
 
 **Objetivo:** pasta `dist/MelhoresValores/` com `MelhoresValores.exe` que roda numa máquina limpa.
 
@@ -323,7 +323,7 @@ Conclusões:
 - [x] `packaging/icon.ico` (selo "MV" da barra lateral, na cor `--color-primary`), gerado por `packaging/make_icon.py`.
 - [x] `scripts/build_desktop.ps1`: `pnpm build` → PyInstaller → checagem de vazamento → tamanho. `pyinstaller==6.22.3` no `requirements-dev.txt`; `pywebview==6.2.1` no `requirements.txt`. `/build/` e `/dist/` no `.gitignore`.
 - [x] Testes: janela (armazenamento persistente, fechar encerra o servidor, sem WebView2 → navegador, servidor que não sobe → sem janela, trazer para frente), 2ª abertura (foca a janela / abre o navegador / `--browser`), rota de foco (404 sem janela, chama o handler, não é engolida pelo SPA) e regressão do log em cp1252. Total: 253.
-- [ ] **Testar na Windows Sandbox:** o recurso **não está habilitado** nesta máquina (exige administrador e reinício). `scripts/sandbox_test.ps1` já abre o `.exe` lá dentro quando estiver habilitado.
+- [ ] ~~Testar na Windows Sandbox~~: **descartado por decisão sua** (o recurso não está habilitado nesta máquina). O `scripts/sandbox_test.ps1` fica para quem quiser usar. No lugar, o `.exe` foi testado com pasta de dados vazia, persistência entre aberturas e troca de versão (F8).
 - [ ] Opcional: instalador com Inno Setup (atalho no menu Iniciar, desinstalador).
 - Possível enxugamento (não feito): `cryptography` (8 MB) e `PIL` (5 MB) entram por imports opcionais de dependências. Dá para excluir depois de confirmar que nada os usa em tempo de execução.
 
@@ -337,17 +337,27 @@ Conclusões:
 **Pronto quando:** o `.exe` funciona na Windows Sandbox. → Funciona numa pasta de dados vazia nesta máquina; o teste em máquina limpa depende de habilitar o Sandbox.
 
 ---
-### Fase 8: Build multiplataforma e distribuição
+### Fase 8: Botões de checagem, build automático, release e README-EXE ✅
 
-- [ ] **Botão para checar o preço de novo dentro dos itens** (a checagem automática só roda com o app aberto, então o usuário precisa disparar na hora que quiser). Fica para o final, antes da release. *A definir com você:* hoje a lista de produtos já tem "Atualizar preço" por item (`POST /product/{id}/refresh`). O pedido é (a) levar esse botão também para dentro do modal de detalhes do item, (b) um "Atualizar todos", ou (c) refazer a **busca por nome** de um item?
-- [ ] `.github/workflows/build-desktop.yml`: disparado por tag `v*`, matriz `windows-latest` / `macos-latest` / `ubuntu-latest` (o PyInstaller não faz cross-compile), roda os testes, faz o build e anexa os `.zip` ao **GitHub Release**.
-- [ ] **README novo para a versão .exe, sem substituir o `README.md` atual** (que continua descrevendo a versão servidor/Docker): criar `README-EXE.md` na raiz e linkar a partir do `README.md`. Conteúdo: o que é a versão desktop e como difere da servidor, download pelo GitHub Releases, instalação e primeira execução, aviso do SmartScreen ("Mais informações → Executar assim mesmo"), onde ficam os dados (`%LOCALAPPDATA%\MelhoresValores\`) e como fazer backup, `config.env` (chave opcional do Firecrawl), navegador usado pelo scraping (Edge/Chrome/Chromium), limitações (checagem só com o app aberto), como gerar o build a partir do código e solução de problemas (porta ocupada, logs). Escrito no final, quando o comportamento já estiver fechado.
-- [ ] Versão única em `execution/__init__.py` (`__version__`), usada no build e na checagem de atualização.
+- [x] **Botões para checar de novo** (decidido: botão nos detalhes + "Atualizar todos"; não foi pedido refazer a busca por nome):
+  - **"Atualizar preço agora" dentro dos detalhes do item** (`RefreshPriceButton`), também em cada anúncio de um grupo. Mostra o resultado ao lado ("Preço atualizado: R$ 72,19", ou o motivo do bloqueio) e revalida na hora o gráfico, as estatísticas e a tabela do modal (o `useRefreshPrice` agora invalida também `['product', id]`).
+  - **"Atualizar todos"** (`RefreshAllButton`, no Dashboard e em Produtos): `POST /api/products/refresh-all` inicia um lote com todos os produtos ativos, **sem cache**; `GET /api/products/refresh-all` devolve o progresso (`total/done/ok/failed`). O botão mostra "Atualizando 3/21…", a lista se atualiza a cada produto concluído e, no fim, aparece um aviso com o resumo.
+  - **A checagem automática de 6 h usa o mesmo lote** (`schedule_all_products(trigger="agendada")`), então a tela também mostra quando o app está checando sozinho. Não há lote duplicado: apertar o botão durante a checagem automática mostra o progresso dela. O horário da última checagem completa é gravado num lugar só, e um "Atualizar todos" manual também zera o relógio de 6 h.
+  - Mensagens de resultado centralizadas em `features/products/refreshMessages.ts` (a página Produtos usava uma cópia embutida).
+- [x] **Fila com prioridade** (achado da Fase 6): `task_runner` tem duas filas de 2 threads, `user` (busca, adicionar produto) e `background` (lotes). `Task.apply_async(..., queue="background")` como no Celery. Teste: uma ação do usuário termina na hora com a fila de lote lotada.
+- [x] **Versão:** `execution/__init__.py` → `__version__ = "0.1.0"`, exposta no `GET /api/` e no log de abertura.
+- [x] **Workflow `.github/workflows/build-desktop.yml`** (Windows): tag `vX.Y.Z` → confere se a tag bate com o `__version__`, roda os testes (Python + frontend), gera o build com `scripts/build_desktop.ps1` (com a checagem de vazamento), compacta e cria o **Release em rascunho** (`prerelease`), para você revisar e publicar. Execução manual gera só o artefato.
+  - Decisão: **só Windows por enquanto** (o plano previa Windows/macOS/Linux). A janela usa o WebView2 do Windows; macOS/Linux exigem outras dependências nativas do pywebview, além de assinatura/notarização no macOS, e ainda não há testadores nesses sistemas.
+- [x] **`README-EXE.md`** (novo; o `README.md` só ganhou um link para ele): o que é e como difere da versão web, requisitos, instalar e abrir (SmartScreen), primeiro uso, atualizar preços, onde ficam os dados (backup, atualizar de versão, desinstalar), Firecrawl opcional com `config.env`, limitações, solução de problemas e a seção para desenvolvedores (build, release).
+- [x] Testes: backend 267 (filas, lote com progresso, não duplicar, sem produtos, rotas `refresh-all`); frontend 43 (mensagens, `useRefreshAll`: progresso, fim do lote, abertura com lote já terminado; `RefreshPriceButton`: preço, bloqueio, timeout). `pnpm lint` e `pnpm typecheck` limpos.
 
-**Pronto quando:** criar a tag `v0.1.0` gera um Release com os 3 artefatos.
+**Validação real** (app com a cópia dos seus dados; Firecrawl desligado):
+- "Atualizar todos" no Dashboard: 21 produtos ativos (o pausado ficou de fora), concluído em 2 min 16 s, **13 ok** (Amazon) e **8 falhas** (Mercado Livre com `login_wall`). O botão mostrou "Atualizando 1/21…" e no fim o aviso "Checagem concluída: 13 de 21 atualizados · 8 não puderam ser verificados agora". A lista foi atualizando sozinha.
+- Durante o lote, uma busca rodou na fila `user` (`mv-user_0`) com as duas threads `mv-background` ocupadas, sem esperar.
+- "Atualizar preço agora" no modal: "Preço atualizado: R$ 72,19", o card de preço atual mudou (63,71 → 72,19), o preço médio foi recalculado e um ponto novo apareceu no gráfico.
+- **Persistência com o `.exe` reconstruído** (pasta de dados vazia): abriu com 0 produtos → adicionou 2 → fechou pelo X → reabriu: 2 → "versão nova" em outra pasta, mesma pasta de dados: 2 → o usuário excluiu 1 → reabriu: 1. O que o usuário adiciona só some se ele excluir.
 
 ---
-
 ### Fase 9: Pós-v1 (melhorias, fora do escopo inicial)
 
 - Checagem de nova versão na abertura (API do GitHub Releases), com aviso na UI.
@@ -396,17 +406,17 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - Diretivas `01_database_prisma.md` (→ SQLite), `03_task_queue_and_scheduler.md` (→ threads/APScheduler), `05_caching_rules.md` (→ memória).
 
 **Já atualizados (F2–F4):** `CLAUDE.md`, `AGENTS.md`, `execution/README.md`, `docs/stack.md`, `docs/conventions.md`, diretivas 01, 03 e 05.
-**Ainda desatualizados (revisão final de docs, junto com o `README-EXE.md`):** `docs/architecture.md`, `docs/flows.md`, `docs/ci.md`, diretivas `06_vision_project.md` e `07_automatic_search.md`, `.agents/workflows/arquitetura.md`, `execution/scrapers/README.md` (Chromium no Docker). O `README.md` raiz **não é alterado**: continua descrevendo a versão servidor.
+**Ainda desatualizados (revisão final de docs):** `docs/architecture.md`, `docs/flows.md`, `docs/ci.md`, diretivas `06_vision_project.md` e `07_automatic_search.md`, `.agents/workflows/arquitetura.md`, `execution/scrapers/README.md` (Chromium no Docker). O `README.md` raiz **não é alterado**: continua descrevendo a versão servidor.
 
 ## 9. Checklist geral
 
 - [x] F0 Preparação da branch
-- [ ] F1 `settings.py` e pasta de dados (parcial: `DATA_DIR`/`DB_PATH`/config prontos)
+- [x] F1 `settings.py` e pasta de dados
 - [x] F2 `db_client.py` em SQLite + `models.py` + testes reais
 - [x] F3 Cache e status de busca em memória (remoção do pacote `redis` fica para a F4)
 - [x] F4 `task_runner.py` + APScheduler com recuperação na abertura
 - [x] F5 `desktop_app.py` + `main.py`, validado sem Docker
 - [x] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura; cópia feita), comparativo de navegadores
-- [x] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev (falta o teste na Windows Sandbox, que não está habilitado)
-- [ ] F8 Botão para checar o preço de novo nos itens, workflow multiplataforma + GitHub Release + `README-EXE.md` (novo, o `README.md` atual fica)
+- [x] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev (Sandbox descartado)
+- [x] F8 Botões de checagem (detalhes + Atualizar todos), fila com prioridade, workflow de build/release (Windows, rascunho) + `README-EXE.md` (novo, o `README.md` atual fica)
 - [ ] F9 Atualizações, bandeja (opcional), configurações

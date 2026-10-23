@@ -10,7 +10,7 @@
 - `lifespan` starts the scheduler and stops scheduler + task pool on shutdown
 
 ### Background tasks (`task_runner.py`) — replaces Celery worker
-- `ThreadPoolExecutor`, 2 workers (same as the old `--concurrency=2`)
+- Two `ThreadPoolExecutor` queues, 2 workers each: `user` (default) and `background` (batch checks)
 - `@task` / `@task(bind=True)` decorator: `.delay()` returns `TaskHandle(id, future)`; `self.request.id` equals the handle id
 - Failures are logged with the task id; queued tasks are dropped when the app closes
 

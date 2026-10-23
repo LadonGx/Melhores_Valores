@@ -84,6 +84,8 @@ search_orchestrator.py
 | POST | `/monitor/add` | Async | Add URL, enqueue scraping |
 | DELETE | `/product/{id}` | Sync | Remove product + history |
 | POST | `/product/{id}/refresh` | Sync (60s) | Force price check |
+| POST | `/products/refresh-all` | Async | Start full check of all active products (no cache); no duplicate batch |
+| GET | `/products/refresh-all` | Sync | Progress of the current/last full check (`total/done/ok/failed`) |
 | PATCH | `/product/{id}/name` | Sync | Update product name |
 | GET | `/product/{id}/history` | Sync | Price history + stats |
 | POST | `/search` | Async | Search by name, enqueue task |
@@ -93,8 +95,8 @@ search_orchestrator.py
 
 | Task | Trigger | Description |
 |---|---|---|
-| `process_price_check(url)` | On demand + scheduler | Cache check → cascade scrape → DB write |
-| `schedule_all_products()` | Every 6 hours (`scheduler.py`, anchored to last run in `AppMeta`) | Re-queues all active products |
+| `process_price_check(url, ..., skip_cache)` | On demand (`user` queue) | Cache check → cascade scrape → DB write |
+| `schedule_all_products(skip_cache, trigger)` | Every 6 h (`scheduler.py`) or "Atualizar todos" | Starts one batch (`background` queue) with progress; records `last_full_check` |
 | `task_search_products(query)` | On demand | Parallel search → filter → DB write |
 
 ## db_client.py — Function Reference

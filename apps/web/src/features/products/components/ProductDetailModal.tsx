@@ -8,6 +8,7 @@ import {
   useProductHistoryTable,
 } from '@/features/products/hooks/useProducts';
 import { PriceHistoryChart } from './PriceHistoryChart';
+import { RefreshPriceButton } from './RefreshPriceButton';
 import { StockWarningBanner } from './StockWarningBanner';
 import type { HistoryRange, Product, ProductGroup } from '@mv/types';
 import { formatCurrency, formatDate, formatStore } from '@mv/utils';
@@ -115,6 +116,7 @@ function SingleProductContent({ product }: { product: Product }) {
           Ver anúncio →
         </a>
       </div>
+      <RefreshPriceButton productId={product.id} />
       <StatCardsRow
         items={[
           { label: 'Preço atual', value: fmtPrice(data?.stats.current_price, isLoading) },
@@ -218,6 +220,7 @@ function ListingAccordion({
               Ver anúncio →
             </a>
           </div>
+          <RefreshPriceButton productId={product.id} />
           <PriceHistoryChart
             points={histData?.chart.points ?? []}
             range={range}

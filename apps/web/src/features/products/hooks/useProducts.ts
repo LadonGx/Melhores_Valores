@@ -1,5 +1,6 @@
+import { useEffect, useRef } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { HistoryRange, ProductStatus } from '@mv/types';
+import type { HistoryRange, ProductStatus, RefreshAllStatus } from '@mv/types';
 import { productsService } from '@/services/products';
 
 export const productKeys = {
@@ -8,6 +9,9 @@ export const productKeys = {
   historyTable: (id: string, limit: number) => ['product', id, 'history', 'table', limit] as const,
   groupStats: (ids: string[]) => ['products', 'group-stats', [...ids].sort().join(',')] as const,
   promotions: ['products', 'promotions'] as const,
+  refreshAll: ['products', 'refresh-all'] as const,
+  /** Prefixo de tudo de um produto (histórico, gráfico, tabela). */
+  product: (id: string) => ['product', id] as const,
 };
 
 export function useProducts() {
@@ -57,7 +61,7 @@ export function useAddProduct() {
     mutationFn: (req: { url: string; name?: string; image_url?: string; price?: number | null; in_stock?: boolean }) =>
       productsService.add(req),
     onSuccess: () => {
-      // Produto criado em background pelo Celery — revalida após delay
+      // Produto criado em background (fila de tarefas) — revalida após delay
       setTimeout(() => queryClient.invalidateQueries({ queryKey: productKeys.all }), 5_000);
     },
   });
@@ -88,9 +92,12 @@ export function useRefreshPrice() {
 
   return useMutation({
     mutationFn: (productId: string) => productsService.refreshPrice(productId),
-    onSuccess: () => {
-      // O endpoint é síncrono — resultado já está no DB quando voltamos
+    onSuccess: (_result, productId) => {
+      // O endpoint é síncrono — resultado já está no DB quando voltamos.
+      // ['products'] cobre lista, promoções e estatísticas de grupo; ['product', id]
+      // cobre o histórico/gráfico abertos no modal de detalhes.
       queryClient.invalidateQueries({ queryKey: productKeys.all });
+      queryClient.invalidateQueries({ queryKey: productKeys.product(productId) });
     },
   });
 }
@@ -113,4 +120,57 @@ export function useUpdateProductStatus() {
       productsService.updateStatus(productId, status),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: productKeys.all }),
   });
+}
+
+export const REFRESH_POLL_RUNNING_MS = 1_500;
+export const REFRESH_POLL_IDLE_MS = 30_000;
+
+/**
+ * Checagem completa ("Atualizar todos" ou a automática de 6 h): inicia e
+ * acompanha o progresso. Enquanto roda, consulta a cada 1,5 s e revalida a
+ * lista a cada produto concluído; parado, consulta a cada 30 s só para notar
+ * quando a checagem automática começar.
+ */
+export function useRefreshAll(options: { onFinished?: (status: RefreshAllStatus) => void } = {}) {
+  const queryClient = useQueryClient();
+  const onFinished = useRef(options.onFinished);
+  onFinished.current = options.onFinished;
+
+  const status = useQuery({
+    queryKey: productKeys.refreshAll,
+    queryFn: productsService.getRefreshAllStatus,
+    refetchInterval: (query) => (query.state.data?.running ? REFRESH_POLL_RUNNING_MS : REFRESH_POLL_IDLE_MS),
+  });
+
+  const running = status.data?.running ?? false;
+  const done = status.data?.done ?? 0;
+  const wasRunning = useRef(false);
+
+  useEffect(() => {
+    if (running && done > 0) {
+      // Cada produto concluído já está no banco: a lista vai se atualizando sozinha
+      queryClient.invalidateQueries({ queryKey: productKeys.all, exact: true });
+    }
+  }, [running, done, queryClient]);
+
+  useEffect(() => {
+    if (wasRunning.current && !running && status.data) {
+      queryClient.invalidateQueries({ queryKey: productKeys.all });
+      queryClient.invalidateQueries({ queryKey: ['product'] });
+      onFinished.current?.(status.data);
+    }
+    wasRunning.current = running;
+  }, [running, status.data, queryClient]);
+
+  const start = useMutation({
+    mutationFn: productsService.startRefreshAll,
+    onSuccess: (data) => queryClient.setQueryData(productKeys.refreshAll, data),
+  });
+
+  return {
+    status: status.data,
+    isRunning: running,
+    start: start.mutate,
+    isStarting: start.isPending,
+  };
 }

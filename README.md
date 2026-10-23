@@ -2,6 +2,8 @@
 
 Rastreador de preços e API de busca para plataformas de e-commerce brasileiras (Amazon BR, Mercado Livre). O sistema monitora preços automaticamente, mantém histórico e permite buscas em tempo real, utilizando uma arquitetura resiliente de web scraping.
 
+> 💻 Existe também uma **versão para Windows (.exe)**, que roda no próprio computador sem servidor: veja o [README-EXE.md](README-EXE.md).
+
 ---
 
 ## 📌 Visão Geral

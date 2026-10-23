@@ -1,0 +1,80 @@
+name: Build desktop (Windows)
+
+# Gera o executável do app desktop (branch exe) e anexa o .zip a um Release.
+# - Tag vX.Y.Z → build + Release em RASCUNHO (revise e publique na mão no GitHub).
+# - Execução manual (Actions → Run workflow) → build só como artefato, sem Release.
+# Só Windows por enquanto: a janela usa o WebView2 do Windows; macOS/Linux exigem
+# outras dependências nativas do pywebview e não têm testadores ainda.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # criar o Release em rascunho
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Versão da tag = __version__
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = python -c "import execution; print(execution.__version__)"
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} não bate com execution/__init__.py (__version__ = $version)"
+          }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Testes
+        run: |
+          python -m pytest execution/tests -q
+          pnpm test
+
+      - name: Build (pnpm build + PyInstaller + checagem de vazamento)
+        shell: pwsh
+        run: ./scripts/build_desktop.ps1
+
+      - name: Compactar
+        id: zip
+        shell: pwsh
+        run: |
+          $name = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "dev-$("${{ github.sha }}".Substring(0,7))" }
+          $zip = "MelhoresValores-$name-windows.zip"
+          Compress-Archive -Path dist\MelhoresValores -DestinationPath $zip
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.zip.outputs.zip }}
+          path: ${{ steps.zip.outputs.zip }}
+
+      - name: Release em rascunho
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: true
+          files: ${{ steps.zip.outputs.zip }}
+          body: |
+            Versão de teste do Melhores Valores para Windows. Veja o README-EXE.md para instalar e usar.
