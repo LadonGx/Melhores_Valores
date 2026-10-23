@@ -358,13 +358,20 @@ Conclusões:
 - **Persistência com o `.exe` reconstruído** (pasta de dados vazia): abriu com 0 produtos → adicionou 2 → fechou pelo X → reabriu: 2 → "versão nova" em outra pasta, mesma pasta de dados: 2 → o usuário excluiu 1 → reabriu: 1. O que o usuário adiciona só some se ele excluir.
 
 ---
-### Fase 9: Pós-v1 (melhorias, fora do escopo inicial)
+### Fase 9: Pós-v1 — aviso de versão, Sobre/Diagnóstico e grupos no banco ✅
 
-- Checagem de nova versão na abertura (API do GitHub Releases), com aviso na UI.
-- Opcional: ícone na bandeja (`pystray`) para continuar agendando com a janela fechada, mais "iniciar com o sistema". Na v1, fechar a janela encerra o app (decidido).
-- Tela de configurações (chave do Firecrawl, intervalo de checagem, baixar Chromium).
-- Backup/exportação do banco (o banco é um arquivo, então basta copiar).
+Escolhidos por você (pensando nos testadores): **aviso de versão nova**, **tela Sobre/Diagnóstico** e **grupos no banco**. Ficaram de fora: configurações e backup.
 
+- [x] **Grupos de produtos no SQLite** (antes só no `localStorage`): migração **v3** (`ProductGroup` + `ProductGroupMember`, com `ON DELETE CASCADE` e a ordem dos anúncios). `db_client`: `list_groups`, `create_group`, `update_group`, `delete_group`, `import_groups`. Rotas `GET/POST /api/groups`, `PATCH/DELETE /api/groups/{id}`, `POST /api/groups/import`.
+  - Mesma regra de antes, agora no backend: grupo precisa de 2+ produtos existentes. Ao excluir um produto, ele sai dos grupos, e o grupo que fica com 1 anúncio é desfeito.
+  - O hook `useProductGroups` manteve a interface (o Dashboard não mudou). Na 1ª abertura, envia ao backend os grupos que ainda estiverem no `localStorage` (preservando id, nome e data) e apaga a cópia local. Se falhar, guarda para tentar de novo. A importação é idempotente.
+  - Validação: na cópia dos seus dados, a migração v2 → v3 rodou; um grupo gravado à moda antiga foi migrado com a data original; depois de **apagar todo o `localStorage`** o grupo continuou na tela.
+- [x] **Aviso de versão nova:** `execution/system_info.py` consulta `api.github.com/repos/LadonGx/Melhores_Valores/releases` (repositório público, sem login), ignora rascunhos, conta pré-releases (como o workflow publica) e compara vX.Y.Z numericamente. Cache de 6 h (limite de 60 consultas/hora sem login). Falha de rede nunca vira erro. `GET /api/system/update` (`?force=true` ignora o cache). No frontend, uma faixa no topo ("Nova versão disponível: 0.2.0 · Baixar →"), dispensável por versão. O link abre no navegador padrão (o pywebview repassa `target="_blank"`, o mesmo que já valia para "Ver anúncio →").
+- [x] **Tela Sobre** (item "Sobre" na barra lateral, rota `/about`): versão + status de atualização + "Verificar agora"; diagnóstico (navegador do nível 2, Firecrawl ligado/desligado, última checagem completa, sistema, pasta de dados, arquivo de log); **"Abrir pasta de dados"** e **"Abrir pasta de logs"** (`POST /api/system/open-folder`, só esses dois destinos); **"Copiar diagnóstico"** (API de área de transferência → `execCommand('copy')` → se tudo falhar, o texto aparece numa caixa para copiar com Ctrl+C). `GET /api/system/info`; versão também no `GET /api/`.
+- [x] Testes: backend 296 (grupos: criar, ordem, inválidos, renomear, desfazer com <2, exclusão de produto, importação idempotente, upgrade v2 → v3; verificação de versão: parse, rascunho/pré-release, rede fora, cache/force; diagnóstico; rotas de grupos e sistema). Frontend 59 (migração do `localStorage`, hook de grupos, faixa de versão nova, texto do diagnóstico, cópia com fallback).
+- Achado durante a validação, **graças à própria tela Sobre**: no PowerShell, `$env:FIRECRAWL_API_KEY = ""` **apaga** a variável, e aí o `.env` do repo voltava a ser carregado nas minhas validações em dev. Nenhuma chamada ao Firecrawl apareceu nos logs dessas rodadas (o único crédito gasto continua sendo o da Fase 4). Correção: uma chave só com espaços conta como "sem chave", e as validações passaram a usar `" "`. No executável isso nunca aconteceria, porque ele não lê o `.env` do repo.
+- **Não verificado na janela real:** o "Copiar diagnóstico" dentro da janela do WebView2 (a ferramenta de captura de tela escondia o conteúdo da janela). No painel de navegador a cópia foi negada e a mensagem de falha apareceu. Os três caminhos da cópia têm teste automatizado.
+- Ideias que continuam em aberto: configurações (chave do Firecrawl e intervalo pela tela), backup/exportação pela tela, bandeja do sistema, lembrar o tamanho da janela, user-agent coerente com o Edge, prioridade entre ofertas da Amazon.
 ---
 
 ## 5. Ordem e dependências
@@ -419,4 +426,4 @@ F2, F3 e F4 são independentes entre si (cada uma troca um serviço) e podem ser
 - [x] F6 Playwright via Edge/Chrome do sistema, Firecrawl opcional, script para copiar os dados da web (só leitura; cópia feita), comparativo de navegadores
 - [x] F7 Janela nativa (pywebview), PyInstaller `--onedir` sem dados do dev (Sandbox descartado)
 - [x] F8 Botões de checagem (detalhes + Atualizar todos), fila com prioridade, workflow de build/release (Windows, rascunho) + `README-EXE.md` (novo, o `README.md` atual fica)
-- [ ] F9 Atualizações, bandeja (opcional), configurações
+- [x] F9 Aviso de versão nova, tela Sobre/Diagnóstico, grupos no banco (configurações e backup ficaram para depois)

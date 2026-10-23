@@ -5,6 +5,7 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/products', label: 'Produtos', end: false },
   { to: '/search', label: 'Buscar produto', end: false },
+  { to: '/about', label: 'Sobre', end: false },
 ];
 
 export function Sidebar() {

@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
+import { UpdateBanner } from '@/features/system/components/UpdateBanner';
 import { useAppStore } from '@/store/app.store';
 import styles from './DashboardLayout.module.css';
 
@@ -12,6 +13,7 @@ export function DashboardLayout() {
       {sidebarOpen && <Sidebar />}
       <div className={styles.main}>
         <Header />
+        <UpdateBanner />
         <main className={styles.content}>
           <Outlet />
         </main>

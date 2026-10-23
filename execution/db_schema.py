@@ -56,4 +56,23 @@ MIGRATIONS: list[str] = [
         value TEXT NOT NULL
     );
     """,
+    # v3: grupos de produtos (antes ficavam só no localStorage do frontend, fora
+    # do backup do banco e sujeitos a sumir se os dados da janela fossem limpos).
+    # Membro some sozinho quando o produto é excluído (CASCADE).
+    """
+    CREATE TABLE ProductGroup (
+        id        TEXT PRIMARY KEY,
+        name      TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE ProductGroupMember (
+        groupId   TEXT NOT NULL REFERENCES ProductGroup(id) ON DELETE CASCADE,
+        productId TEXT NOT NULL REFERENCES Product(id) ON DELETE CASCADE,
+        position  INTEGER NOT NULL,
+        PRIMARY KEY (groupId, productId)
+    );
+
+    CREATE INDEX ProductGroupMember_productId_idx ON ProductGroupMember(productId);
+    """,
 ]

@@ -8,13 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .db_client import (
-    add_price_history, delete_product, get_all_products, get_or_create_product,
+    add_price_history, create_group, delete_group, delete_product, get_all_products, get_group,
+    get_or_create_product, import_groups, list_groups, update_group,
     get_group_price_stats, get_latest_price_entry, get_price_history_chart,
     get_price_history_page, get_price_stats,
     get_product_by_id, get_products_with_history,
     get_search_results, update_product_name, update_product_status,
 )
-from . import __version__, scheduler, task_runner
+from . import __version__, scheduler, system_info, task_runner
 from .search_status import get_search_warnings
 from .store_detection import detect_store_from_url
 from .worker_tasks import (
@@ -64,6 +65,24 @@ class UpdateNameRequest(BaseModel):
 
 class UpdateStatusRequest(BaseModel):
     status: str
+
+
+class GroupCreateRequest(BaseModel):
+    name: str
+    productIds: list[str]
+
+
+class GroupUpdateRequest(BaseModel):
+    name: str | None = None
+    productIds: list[str] | None = None
+
+
+class GroupsImportRequest(BaseModel):
+    groups: list[dict]
+
+
+class OpenFolderRequest(BaseModel):
+    target: Literal["data", "logs"]
 
 
 class SearchRequest(BaseModel):
@@ -171,6 +190,72 @@ def refresh_all_products():
 def get_refresh_all_status():
     """Progresso da checagem completa atual (ou da última desde que o app abriu)."""
     return refresh_status() or {"running": False, "total": 0, "done": 0, "ok": 0, "failed": 0}
+
+
+# ─────────────────────────────────────────────
+# Rotas: sistema (tela "Sobre": versão nova e diagnóstico)
+# ─────────────────────────────────────────────
+
+@app.get("/system/update")
+def get_update_info(force: bool = False):
+    """Há versão nova nos Releases do GitHub? Consulta no máximo a cada 6 h (force=true ignora o cache)."""
+    return system_info.check_for_update(force=force)
+
+
+@app.get("/system/info")
+def get_system_info():
+    return system_info.get_system_info()
+
+
+@app.post("/system/open-folder")
+def open_system_folder(payload: OpenFolderRequest):
+    """Abre a pasta de dados ou de logs no Explorador de Arquivos (para o testador mandar o app.log)."""
+    return {"status": "ok", "path": system_info.open_folder(payload.target)}
+
+
+# ─────────────────────────────────────────────
+# Rotas: grupos de produtos (antes só no localStorage do frontend)
+# ─────────────────────────────────────────────
+
+@app.get("/groups")
+def list_product_groups():
+    return {"groups": [g.model_dump(mode="json") for g in list_groups()]}
+
+
+@app.post("/groups")
+def create_product_group(payload: GroupCreateRequest):
+    try:
+        return create_group(payload.name, payload.productIds).model_dump(mode="json")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.patch("/groups/{group_id}")
+def update_product_group(group_id: str, payload: GroupUpdateRequest):
+    """Renomeia e/ou troca os anúncios. Com menos de 2 anúncios o grupo é desfeito."""
+    if get_group(group_id) is None:
+        raise HTTPException(status_code=404, detail="Grupo não encontrado.")
+    try:
+        group = update_group(group_id, name=payload.name, product_ids=payload.productIds)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if group is None:
+        return {"deleted": True, "id": group_id}
+    return group.model_dump(mode="json")
+
+
+@app.delete("/groups/{group_id}")
+def delete_product_group(group_id: str):
+    """Desfaz o grupo. Os produtos continuam monitorados."""
+    if not delete_group(group_id):
+        raise HTTPException(status_code=404, detail="Grupo não encontrado.")
+    return {"status": "ok", "deleted_id": group_id}
+
+
+@app.post("/groups/import")
+def import_product_groups(payload: GroupsImportRequest):
+    """Migração única dos grupos que estavam no localStorage. Idempotente."""
+    return import_groups(payload.groups)
 
 
 @app.delete("/product/{product_id}")

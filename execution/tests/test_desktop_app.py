@@ -13,17 +13,19 @@ import pytest
 from execution import desktop_app, web_server
 
 
-def _get(app, path: str, method: str = "GET") -> tuple[int, dict[str, str], bytes]:
+def _get(app, path: str, method: str = "GET", body: dict | None = None) -> tuple[int, dict[str, str], bytes]:
     scope = {
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
         "method": method, "scheme": "http", "path": path, "raw_path": path.encode(),
-        "query_string": b"", "root_path": "", "headers": [(b"host", b"testserver")],
+        "query_string": b"", "root_path": "",
+        "headers": [(b"host", b"testserver")] + ([(b"content-type", b"application/json")] if body is not None else []),
         "client": ("127.0.0.1", 50000), "server": ("testserver", 80),
     }
     messages: list[dict] = []
 
     async def receive():
-        return {"type": "http.request", "body": b"", "more_body": False}
+        payload = json.dumps(body).encode() if body is not None else b""
+        return {"type": "http.request", "body": payload, "more_body": False}
 
     async def send(message):
         messages.append(message)
@@ -161,3 +163,62 @@ class TestRefreshAllRoutes:
                             lambda **kw: {"status": "already_running", "scheduled_products": 0, "batch": batch})
         _, _, body = _get(app, "/api/products/refresh-all", method="POST")
         assert json.loads(body) == {"started": False, **batch}
+
+class TestGroupRoutes:
+    @pytest.fixture(autouse=True)
+    def isolated_db(self, tmp_path, monkeypatch):
+        from execution import db_client
+
+        monkeypatch.setattr(db_client, "DB_PATH", tmp_path / "groups.db")
+        self.ids = [db_client.get_or_create_product(url=f"https://g/{i}", name=f"P{i}", store="amazon").id for i in range(3)]
+        yield
+        db_client.close_db()
+
+    def test_crud_flow(self, app):
+        a, b, c = self.ids
+        status, _, body = _get(app, "/api/groups", method="POST", body={"name": "Livros", "productIds": [a, b]})
+        assert status == 200
+        group = json.loads(body)
+        assert group["name"] == "Livros" and group["productIds"] == [a, b]
+
+        _, _, body = _get(app, "/api/groups")
+        assert [g["id"] for g in json.loads(body)["groups"]] == [group["id"]]
+
+        status, _, body = _get(app, f"/api/groups/{group['id']}", method="PATCH", body={"productIds": [a, b, c]})
+        assert status == 200 and json.loads(body)["productIds"] == [a, b, c]
+
+        status, _, body = _get(app, f"/api/groups/{group['id']}", method="PATCH", body={"productIds": [a]})
+        assert json.loads(body) == {"deleted": True, "id": group["id"]}
+
+        status, _, _ = _get(app, f"/api/groups/{group['id']}", method="DELETE")
+        assert status == 404
+
+    def test_invalid_group_is_400(self, app):
+        status, _, body = _get(app, "/api/groups", method="POST", body={"name": "Só um", "productIds": [self.ids[0]]})
+        assert status == 400 and "ao menos 2" in json.loads(body)["detail"]
+
+    def test_import_legacy_groups(self, app):
+        a, b, _ = self.ids
+        legacy = [{"id": "g1", "name": "Antigo", "productIds": [a, b], "createdAt": "2026-09-01T12:00:00.000Z"}]
+        _, _, body = _get(app, "/api/groups/import", method="POST", body={"groups": legacy})
+        assert json.loads(body) == {"imported": 1, "skipped": 0}
+        _, _, body = _get(app, "/api/groups/import", method="POST", body={"groups": legacy})
+        assert json.loads(body) == {"imported": 0, "skipped": 1}
+
+
+class TestSystemRoutes:
+    def test_update_and_info(self, app, monkeypatch):
+        monkeypatch.setattr(web_server.system_info, "check_for_update",
+                            lambda force=False: {"update_available": False, "force": force})
+        _, _, body = _get(app, "/api/system/update")
+        assert json.loads(body) == {"update_available": False, "force": False}
+        _, _, body = _get(app, "/api/system/info")
+        assert json.loads(body)["version"] == web_server.__version__
+
+    def test_open_folder_rejects_unknown_target(self, app, monkeypatch):
+        opened = []
+        monkeypatch.setattr(web_server.system_info, "open_folder", lambda t: opened.append(t) or "C:/x")
+        status, _, _ = _get(app, "/api/system/open-folder", method="POST", body={"target": "C:/Windows"})
+        assert status == 422 and opened == []
+        status, _, _ = _get(app, "/api/system/open-folder", method="POST", body={"target": "logs"})
+        assert status == 200 and opened == ["logs"]

@@ -1,61 +1,90 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ProductGroup } from '@mv/types';
+import { groupsService } from '@/services/groups';
 
-const STORAGE_KEY = 'mv_product_groups';
+/** Onde os grupos ficavam antes de irem para o banco (só lido para migrar). */
+export const LEGACY_STORAGE_KEY = 'mv_product_groups';
 
-function loadGroups(): ProductGroup[] {
+export const groupKeys = {
+  all: ['groups'] as const,
+};
+
+function readLegacyGroups(): ProductGroup[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as ProductGroup[]) : [];
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? (parsed as ProductGroup[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveGroups(groups: ProductGroup[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(groups));
-}
-
+/**
+ * Grupos de anúncios do mesmo produto, guardados no banco (antes ficavam no
+ * localStorage, fora do backup e sujeitos a sumir se os dados da janela fossem
+ * limpos). Na primeira vez, envia ao backend os grupos que ainda estiverem no
+ * localStorage e apaga a cópia local.
+ */
 export function useProductGroups() {
-  const [groups, setGroups] = useState<ProductGroup[]>(loadGroups);
+  const queryClient = useQueryClient();
+  const { data: groups = [] } = useQuery({
+    queryKey: groupKeys.all,
+    queryFn: groupsService.list,
+  });
 
-  const persist = useCallback((next: ProductGroup[]) => {
-    saveGroups(next);
-    setGroups(next);
-  }, []);
+  const invalidate = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: groupKeys.all }),
+    [queryClient],
+  );
+
+  const migrationStarted = useRef(false);
+  useEffect(() => {
+    if (migrationStarted.current) return;
+    migrationStarted.current = true;
+    const legacy = readLegacyGroups();
+    if (legacy.length === 0) return;
+    groupsService
+      .importLegacy(legacy)
+      .then(() => {
+        localStorage.removeItem(LEGACY_STORAGE_KEY);
+        invalidate();
+      })
+      .catch(() => {
+        // Mantém a cópia local para tentar de novo na próxima abertura
+      });
+  }, [invalidate]);
+
+  const { mutate: createMutate } = useMutation({
+    mutationFn: ({ name, productIds }: { name: string; productIds: string[] }) =>
+      groupsService.create(name.trim(), productIds),
+    onSuccess: invalidate,
+  });
+
+  const { mutate: removeMutate } = useMutation({
+    mutationFn: (groupId: string) => groupsService.remove(groupId),
+    // O backend já pode ter desfeito o grupo (ex: produtos excluídos): recarrega de qualquer jeito
+    onSettled: invalidate,
+  });
+
+  const { mutate: ungroupMutate } = useMutation({
+    mutationFn: ({ groupId, productId }: { groupId: string; productId: string }) => {
+      const group = queryClient.getQueryData<ProductGroup[]>(groupKeys.all)?.find((g) => g.id === groupId);
+      const remaining = (group?.productIds ?? []).filter((id) => id !== productId);
+      // Com menos de 2 anúncios o backend desfaz o grupo (mesma regra de antes)
+      return groupsService.update(groupId, { productIds: remaining });
+    },
+    onSettled: invalidate,
+  });
 
   const createGroup = useCallback(
-    (name: string, productIds: string[]) => {
-      const group: ProductGroup = {
-        id: crypto.randomUUID(),
-        name: name.trim(),
-        productIds,
-        createdAt: new Date().toISOString(),
-      };
-      persist([...loadGroups(), group]);
-    },
-    [persist],
+    (name: string, productIds: string[]) => createMutate({ name, productIds }),
+    [createMutate],
   );
-
-  const deleteGroup = useCallback(
-    (groupId: string) => {
-      persist(loadGroups().filter((g) => g.id !== groupId));
-    },
-    [persist],
-  );
-
+  const deleteGroup = useCallback((groupId: string) => removeMutate(groupId), [removeMutate]);
   const ungroupProduct = useCallback(
-    (groupId: string, productId: string) => {
-      const current = loadGroups();
-      const next = current
-        .map((g) =>
-          g.id === groupId ? { ...g, productIds: g.productIds.filter((id) => id !== productId) } : g,
-        )
-        // Remove groups that end up with fewer than 2 products
-        .filter((g) => g.productIds.length >= 2);
-      persist(next);
-    },
-    [persist],
+    (groupId: string, productId: string) => ungroupMutate({ groupId, productId }),
+    [ungroupMutate],
   );
 
   return { groups, createGroup, deleteGroup, ungroupProduct };

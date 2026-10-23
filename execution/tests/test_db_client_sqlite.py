@@ -350,6 +350,92 @@ class TestBulkImport:
         assert db_client.is_empty() is True
 
 
+class TestProductGroups:
+    def _three_products(self):
+        return [_product(url=f"https://g/{i}", name=f"Livro {i}").id for i in range(3)]
+
+    def test_create_and_list_keep_member_order(self):
+        a, b, c = self._three_products()
+        group = db_client.create_group("  Livros  ", [c, a, b])
+        assert group.name == "Livros"
+        assert group.productIds == [c, a, b]
+        assert group.createdAt.tzinfo is not None
+        assert db_client.list_groups() == [group]
+
+    def test_unknown_and_repeated_products_are_ignored(self):
+        a, b, _ = self._three_products()
+        group = db_client.create_group("G", [a, "nao-existe", a, b])
+        assert group.productIds == [a, b]
+
+    def test_group_needs_two_existing_products_and_a_name(self):
+        a, b, _ = self._three_products()
+        with pytest.raises(ValueError, match="ao menos 2"):
+            db_client.create_group("G", [a, "nao-existe"])
+        with pytest.raises(ValueError, match="nome"):
+            db_client.create_group("   ", [a, b])
+        assert db_client.list_groups() == []
+
+    def test_rename_and_change_members(self):
+        a, b, c = self._three_products()
+        group = db_client.create_group("G", [a, b])
+        updated = db_client.update_group(group.id, name="Novo nome", product_ids=[b, c])
+        assert updated.name == "Novo nome" and updated.productIds == [b, c]
+
+    def test_update_to_less_than_two_dissolves_group(self):
+        a, b, _ = self._three_products()
+        group = db_client.create_group("G", [a, b])
+        assert db_client.update_group(group.id, product_ids=[a]) is None
+        assert db_client.list_groups() == []
+        assert db_client.get_product_by_id(a) is not None  # produtos continuam
+
+    def test_update_missing_group_returns_none(self):
+        assert db_client.update_group("nao-existe", name="X") is None
+
+    def test_delete_group_keeps_products(self):
+        a, b, _ = self._three_products()
+        group = db_client.create_group("G", [a, b])
+        assert db_client.delete_group(group.id) is True
+        assert db_client.delete_group(group.id) is False
+        assert db_client.get_product_by_id(a) is not None
+
+    def test_deleting_a_product_updates_groups(self):
+        a, b, c = self._three_products()
+        pair = db_client.create_group("Par", [a, b])
+        trio = db_client.create_group("Trio", [a, b, c])
+        db_client.delete_product(a)
+        groups = {g.name: g for g in db_client.list_groups()}
+        assert "Par" not in groups                      # ficou com 1 anúncio: desfeito
+        assert groups["Trio"].productIds == [b, c]      # perdeu só o excluído
+        assert pair.id != trio.id
+
+    def test_import_from_localstorage_is_idempotent(self):
+        a, b, c = self._three_products()
+        legacy = [
+            {"id": "g1", "name": "Do navegador", "productIds": [a, b], "createdAt": "2026-09-01T12:00:00.000Z"},
+            {"id": "g2", "name": "Só um válido", "productIds": [c, "apagado"], "createdAt": "2026-09-02T12:00:00.000Z"},
+            {"name": "sem id"},
+        ]
+        assert db_client.import_groups(legacy) == {"imported": 1, "skipped": 2}
+        assert db_client.import_groups(legacy) == {"imported": 0, "skipped": 3}
+        [group] = db_client.list_groups()
+        assert group.id == "g1" and group.name == "Do navegador"
+        assert group.createdAt == datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+
+    def test_v2_database_is_upgraded_to_v3(self, tmp_path):
+        db_client.close_db()
+        path = tmp_path / "v2.db"
+        conn = sqlite3.connect(path)
+        for version, sql in enumerate(MIGRATIONS[:2], start=1):
+            conn.executescript(f"BEGIN;\n{sql}\nPRAGMA user_version = {version};\nCOMMIT;")
+        conn.close()
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(db_client, "DB_PATH", path)
+            assert db_client.connect_db().execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
+            assert db_client.list_groups() == []
+            db_client.close_db()
+
+
 class TestAppMeta:
     def test_last_full_check_round_trip_and_upsert(self):
         assert db_client.get_last_full_check() is None

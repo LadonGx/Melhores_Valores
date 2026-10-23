@@ -72,7 +72,11 @@ export function useRemoveProduct() {
 
   return useMutation({
     mutationFn: (productId: string) => productsService.remove(productId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: productKeys.all }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: productKeys.all });
+      // Excluir um produto tira ele dos grupos (e desfaz grupo que ficar com 1 anúncio)
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+    },
   });
 }
 

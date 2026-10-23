@@ -6,6 +6,7 @@ const ROUTE_TITLES: Record<string, string> = {
   '/': 'Dashboard',
   '/products': 'Produtos',
   '/search': 'Buscar produto',
+  '/about': 'Sobre',
 };
 
 export function Header() {

@@ -165,3 +165,28 @@ export interface RefreshAllStatus {
   /** Só na resposta do POST: false quando já havia uma checagem em andamento. */
   started?: boolean;
 }
+
+/** GET /system/update — há versão nova nos Releases do GitHub? */
+export interface UpdateInfo {
+  current: string;
+  latest: string | null;
+  update_available: boolean;
+  url: string;
+  published_at: string | null;
+  error: string | null;
+}
+
+/** GET /system/info — diagnóstico mostrado na tela "Sobre". */
+export interface SystemInfo {
+  version: string;
+  frozen: boolean;
+  data_dir: string;
+  db_path: string;
+  log_file: string;
+  /** Navegador do nível 2 do scraping; null até ser usado nesta abertura. */
+  browser: string | null;
+  firecrawl_configured: boolean;
+  last_full_check: string | null;
+  os: string;
+  python: string;
+}

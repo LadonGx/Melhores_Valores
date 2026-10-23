@@ -10,7 +10,7 @@ from typing import Iterator
 from zoneinfo import ZoneInfo
 
 from .db_schema import MIGRATIONS
-from .models import PriceHistory, Product, SearchResult
+from .models import PriceHistory, Product, ProductGroup, SearchResult
 from .settings import DB_PATH
 
 _BRT = ZoneInfo("America/Sao_Paulo")
@@ -421,7 +421,10 @@ def delete_product(product_id: str) -> bool:
     try:
         with _write() as conn:
             cursor = conn.execute("DELETE FROM Product WHERE id = ?", (product_id,))
-        deleted = cursor.rowcount > 0
+            deleted = cursor.rowcount > 0
+            if deleted:
+                # O CASCADE tira o produto dos grupos; grupo que sobra com 1 anúncio é desfeito
+                _drop_small_groups(conn)
         if deleted:
             logger.info(f"Produto {product_id} removido com sucesso.")
         return deleted
@@ -498,6 +501,133 @@ def get_last_valid_price_for_url(url: str) -> float | None:
     except Exception as e:
         logger.error("Erro ao buscar último preço para sanity check | url=%s | %s", url, e)
         return None
+
+
+# ─────────────────────────────────────────────
+# ProductGroup — grupos de anúncios do mesmo produto
+# ─────────────────────────────────────────────
+
+# Um grupo só faz sentido com 2+ anúncios (mesma regra que o frontend já usava)
+MIN_GROUP_SIZE = 2
+
+
+def _drop_small_groups(conn: sqlite3.Connection) -> int:
+    """Desfaz grupos que ficaram com menos de 2 anúncios (ex: produto excluído)."""
+    cursor = conn.execute(
+        """DELETE FROM ProductGroup WHERE id IN (
+               SELECT g.id FROM ProductGroup g
+               LEFT JOIN ProductGroupMember m ON m.groupId = g.id
+               GROUP BY g.id HAVING COUNT(m.productId) < ?
+           )""",
+        (MIN_GROUP_SIZE,),
+    )
+    return cursor.rowcount
+
+
+def _existing_product_ids(conn: sqlite3.Connection, product_ids: list[str]) -> list[str]:
+    """Mantém só ids de produtos que existem, na ordem dada e sem repetição."""
+    unique = list(dict.fromkeys(product_ids))
+    if not unique:
+        return []
+    placeholders = ", ".join("?" for _ in unique)
+    found = {r["id"] for r in conn.execute(f"SELECT id FROM Product WHERE id IN ({placeholders})", unique)}
+    return [pid for pid in unique if pid in found]
+
+
+def _set_members(conn: sqlite3.Connection, group_id: str, product_ids: list[str]) -> None:
+    conn.execute("DELETE FROM ProductGroupMember WHERE groupId = ?", (group_id,))
+    conn.executemany(
+        "INSERT INTO ProductGroupMember (groupId, productId, position) VALUES (?, ?, ?)",
+        [(group_id, pid, i) for i, pid in enumerate(product_ids)],
+    )
+
+
+def list_groups() -> list[ProductGroup]:
+    """Todos os grupos (mais antigos primeiro), com os anúncios na ordem em que foram agrupados."""
+    conn = connect_db()
+    members: dict[str, list[str]] = {}
+    for row in conn.execute("SELECT groupId, productId FROM ProductGroupMember ORDER BY groupId, position"):
+        members.setdefault(row["groupId"], []).append(row["productId"])
+    return [
+        ProductGroup(id=r["id"], name=r["name"], createdAt=r["createdAt"], productIds=members.get(r["id"], []))
+        for r in conn.execute("SELECT * FROM ProductGroup ORDER BY createdAt, id")
+    ]
+
+
+def get_group(group_id: str) -> ProductGroup | None:
+    return next((g for g in list_groups() if g.id == group_id), None)
+
+
+def create_group(
+    name: str,
+    product_ids: list[str],
+    group_id: str | None = None,
+    created_at: datetime | None = None,
+) -> ProductGroup:
+    """
+    Cria um grupo. Ids de produtos inexistentes são ignorados; com menos de 2
+    anúncios válidos o grupo não é criado (ValueError).
+    """
+    name = name.strip()
+    if not name:
+        raise ValueError("O grupo precisa de um nome.")
+    with _write() as conn:
+        valid = _existing_product_ids(conn, product_ids)
+        if len(valid) < MIN_GROUP_SIZE:
+            raise ValueError(f"Um grupo precisa de ao menos {MIN_GROUP_SIZE} produtos existentes.")
+        group_id = group_id or str(uuid.uuid4())
+        conn.execute(
+            "INSERT INTO ProductGroup (id, name, createdAt) VALUES (?, ?, ?)",
+            (group_id, name, _iso(created_at or datetime.now(timezone.utc))),
+        )
+        _set_members(conn, group_id, valid)
+    return get_group(group_id)
+
+
+def update_group(group_id: str, name: str | None = None, product_ids: list[str] | None = None) -> ProductGroup | None:
+    """
+    Renomeia e/ou troca os anúncios do grupo. Se sobrarem menos de 2 anúncios,
+    o grupo é desfeito e a função devolve None. Grupo inexistente também → None.
+    """
+    with _write() as conn:
+        if not conn.execute("SELECT 1 FROM ProductGroup WHERE id = ?", (group_id,)).fetchone():
+            return None
+        if name is not None:
+            if not name.strip():
+                raise ValueError("O grupo precisa de um nome.")
+            conn.execute("UPDATE ProductGroup SET name = ? WHERE id = ?", (name.strip(), group_id))
+        if product_ids is not None:
+            _set_members(conn, group_id, _existing_product_ids(conn, product_ids))
+            _drop_small_groups(conn)
+    return get_group(group_id)
+
+
+def delete_group(group_id: str) -> bool:
+    """Desfaz o grupo (os produtos continuam monitorados)."""
+    with _write() as conn:
+        cursor = conn.execute("DELETE FROM ProductGroup WHERE id = ?", (group_id,))
+    return cursor.rowcount > 0
+
+
+def import_groups(groups: list[dict]) -> dict[str, int]:
+    """
+    Importa grupos que estavam no localStorage do frontend (migração única).
+    Idempotente: ids que já existem são pulados; grupos com menos de 2
+    produtos existentes também. Preserva id, nome e data de criação.
+    """
+    imported = skipped = 0
+    for g in groups:
+        try:
+            if get_group(g["id"]) is not None:
+                skipped += 1
+                continue
+            created_at = datetime.fromisoformat(g["createdAt"].replace("Z", "+00:00")) if g.get("createdAt") else None
+            create_group(g["name"], list(g.get("productIds") or []), group_id=g["id"], created_at=created_at)
+            imported += 1
+        except (KeyError, ValueError, TypeError, sqlite3.Error) as e:
+            logger.warning("Grupo não importado (%s): %s", g.get("id") if isinstance(g, dict) else g, e)
+            skipped += 1
+    return {"imported": imported, "skipped": skipped}
 
 
 # ─────────────────────────────────────────────

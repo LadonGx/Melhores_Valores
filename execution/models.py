@@ -33,6 +33,14 @@ class Product(BaseModel):
     history: list[PriceHistory] | None = None
 
 
+class ProductGroup(BaseModel):
+    """Mesmo formato do ProductGroup do frontend (@mv/types)."""
+    id: str
+    name: str
+    productIds: list[str]
+    createdAt: datetime
+
+
 class SearchResult(BaseModel):
     id: str
     search_id: str

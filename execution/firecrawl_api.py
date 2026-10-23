@@ -8,7 +8,10 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")
+# Chave só com espaços = sem chave. Também serve para desligar o Firecrawl num
+# terminal PowerShell, onde `$env:FIRECRAWL_API_KEY = ""` apaga a variável (e o
+# .env do repo voltaria a ser carregado) em vez de deixá-la vazia.
+FIRECRAWL_API_KEY = (os.getenv("FIRECRAWL_API_KEY") or "").strip()
 FIRECRAWL_BASE_URL = os.getenv("FIRECRAWL_BASE_URL", "https://api.firecrawl.dev/v1/scrape")
 
 
