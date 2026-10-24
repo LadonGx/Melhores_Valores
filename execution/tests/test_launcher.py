@@ -354,3 +354,47 @@ class TestFocusRunningInstance:
             s.bind(("127.0.0.1", 0))
             free_port = s.getsockname()[1]
         assert launcher.focus_running_instance(free_port) is False
+
+class TestUnblockBundledFiles:
+    """Regressão do v0.1.0 baixado do GitHub: arquivos extraídos do .zip vêm com a
+    marca "veio da internet" e o .NET não carrega a Python.Runtime.dll do pywebview."""
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="fluxos NTFS (Zone.Identifier) só existem no Windows")
+    def test_removes_internet_mark_from_every_file(self, tmp_path):
+        files = [tmp_path / "Python.Runtime.dll", tmp_path / "sub" / "outro.pyd", tmp_path / "limpo.txt"]
+        for f in files:
+            f.parent.mkdir(exist_ok=True)
+            f.write_bytes(b"conteudo")
+        for f in files[:2]:
+            with open(f"{f}:Zone.Identifier", "w") as stream:
+                stream.write("[ZoneTransfer]\nZoneId=3\n")
+        assert os.path.exists(f"{files[0]}:Zone.Identifier")
+
+        assert launcher.unblock_bundled_files(tmp_path) == 2
+        assert not any(os.path.exists(f"{f}:Zone.Identifier") for f in files)
+        assert all(f.read_bytes() == b"conteudo" for f in files)  # conteúdo intacto
+        assert launcher.unblock_bundled_files(tmp_path) == 0      # idempotente
+
+    def test_noop_outside_windows(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(launcher.sys, "platform", "linux")
+        (tmp_path / "a.dll").write_bytes(b"x")
+        assert launcher.unblock_bundled_files(tmp_path) == 0
+
+    @pytest.fixture
+    def fake_start(self, monkeypatch):
+        calls = {"unblock": [], "window": 0}
+        monkeypatch.setattr(launcher, "find_running_instance", lambda: None)
+        monkeypatch.setattr(launcher, "unblock_bundled_files", lambda root: calls["unblock"].append(root) or 0)
+        monkeypatch.setattr(launcher, "run_with_window", lambda *a: calls.__setitem__("window", calls["window"] + 1))
+        return calls
+
+    def test_frozen_window_mode_unblocks_before_opening_the_window(self, fake_start, monkeypatch, tmp_path):
+        monkeypatch.setattr(launcher, "is_frozen", lambda: True)
+        monkeypatch.setattr(launcher.sys, "_MEIPASS", str(tmp_path), raising=False)
+        assert launcher.main([]) == 0
+        assert fake_start["unblock"] == [tmp_path] and fake_start["window"] == 1
+
+    def test_running_from_source_does_not_touch_files(self, fake_start, monkeypatch):
+        monkeypatch.setattr(launcher, "is_frozen", lambda: False)
+        launcher.main([])
+        assert fake_start["unblock"] == []

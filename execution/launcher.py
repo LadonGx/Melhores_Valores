@@ -22,9 +22,10 @@ import time
 import urllib.request
 import webbrowser
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
 from . import __version__
-from .settings import LOCK_PATH, LOG_DIR, PORT_PATH, WEBVIEW_DIR
+from .settings import LOCK_PATH, LOG_DIR, PORT_PATH, WEBVIEW_DIR, is_frozen
 
 HOST = "127.0.0.1"
 # Fora das portas comuns de dev (8000, 3000, 5173...) e abaixo da faixa efêmera
@@ -152,6 +153,33 @@ def open_browser_when_ready(port: int, timeout: float = STARTUP_TIMEOUT) -> bool
     return False
 
 
+def unblock_bundled_files(root: Path) -> int:
+    """
+    Tira a marca "veio da internet" (fluxo NTFS `Zone.Identifier`) dos arquivos
+    do próprio app. O Windows marca tudo o que sai de um .zip baixado, e o .NET
+    Framework se recusa a carregar DLL marcada: o pythonnet não sobe a
+    Python.Runtime.dll e a janela (pywebview) cai para o navegador. É o mesmo
+    que o usuário clicar em "Desbloquear" nas propriedades do arquivo.
+    Só mexe dentro de `root` (a pasta interna do executável). Devolve quantos desbloqueou.
+    """
+    if sys.platform != "win32":
+        return 0
+    unblocked = 0
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            os.remove(f"{path}:Zone.Identifier")
+            unblocked += 1
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            # Pasta somente leitura (ex: instalado em Program Files): segue sem desbloquear
+            logger.warning("Não foi possível desbloquear %s: %s", path, e)
+            break
+    return unblocked
+
+
 def focus_running_instance(port: int) -> bool:
     """Pede à instância aberta para trazer a janela para frente. False se ela não tem janela."""
     request = urllib.request.Request(f"http://{HOST}:{port}/_desktop/focus", method="POST", data=b"")
@@ -260,6 +288,11 @@ def main(argv: list[str] | None = None) -> int:
         if mode != "none":
             webbrowser.open(f"http://{HOST}:{running_port}/")
         return 0
+
+    if mode == "window" and is_frozen():
+        unblocked = unblock_bundled_files(Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent)))
+        if unblocked:
+            logger.info("Desbloqueados %d arquivos do app marcados como baixados da internet", unblocked)
 
     import uvicorn
 
