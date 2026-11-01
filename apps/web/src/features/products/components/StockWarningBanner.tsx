@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { useUpdateProductStatus } from '@/features/products/hooks/useProducts';
 import type { Product } from '@mv/types';
 import { formatDate } from '@mv/utils';
@@ -36,7 +37,7 @@ export function StockWarningBanner({ product }: StockWarningBannerProps) {
   if (isPaused) {
     return (
       <div className={`${styles.banner} ${styles.paused}`}>
-        <span className={styles.icon}>⏸</span>
+        <span className={styles.icon}><Icon name="pause" size={16} /></span>
         <div className={styles.text}>
           <strong>Monitoramento pausado.</strong> O histórico de preços deste anúncio continua
           disponível e nada foi apagado.
@@ -55,7 +56,7 @@ export function StockWarningBanner({ product }: StockWarningBannerProps) {
 
   return (
     <div className={`${styles.banner} ${styles.warning}`}>
-      <span className={styles.icon}>⚠</span>
+      <Icon name="alert" size={16} className={styles.warningIcon} />
       <div className={styles.text}>
         <strong>Este anúncio pode estar fora de estoque ou ter sido removido.</strong>{' '}
         {product.last_checked

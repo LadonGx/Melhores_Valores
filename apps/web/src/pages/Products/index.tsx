@@ -3,6 +3,7 @@ import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { Modal } from '@/components/Modal';
+import { PageHeader } from '@/components/PageHeader';
 import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
@@ -18,6 +19,16 @@ import { formatCurrency, formatDate, formatStore } from '@mv/utils';
 import styles from './Products.module.css';
 
 type ModalType = 'url' | 'search' | null;
+
+/** Domínio + caminho da URL, para a linha secundária (muted) sob o nome do produto. */
+function formatUrlPath(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname}`.replace(/\/$/, '');
+  } catch {
+    return url;
+  }
+}
 
 // ─── Inline name editor ───────────────────────────────────────────────────────
 
@@ -50,7 +61,7 @@ function NameCell({ product }: { product: Product }) {
 
   if (editing) {
     return (
-      <div className={styles.nameEditRow}>
+      <div className={[styles.nameCol, styles.nameEditRow].join(' ')}>
         <input
           ref={inputRef}
           className={styles.nameInput}
@@ -73,7 +84,7 @@ function NameCell({ product }: { product: Product }) {
   }
 
   return (
-    <div>
+    <div className={styles.nameCol}>
       <div className={styles.nameRow}>
         <span className={[styles.productName, hasGarbageName ? styles.noName : ''].join(' ')}>
           {product.name ?? <em>Sem nome</em>}
@@ -82,8 +93,8 @@ function NameCell({ product }: { product: Product }) {
           ✎
         </button>
       </div>
-      <a href={product.url} target="_blank" rel="noreferrer" className={styles.productUrl}>
-        {product.url}
+      <a href={product.url} target="_blank" rel="noreferrer" className={styles.productUrl} title={product.url}>
+        {formatUrlPath(product.url)}
       </a>
     </div>
   );
@@ -186,6 +197,7 @@ export function Products() {
       render: (r) => (
         <input
           type="checkbox"
+          aria-label={`Selecionar ${r.name ?? 'produto'}`}
           className={styles.checkbox}
           checked={selectedIds.has(r.id)}
           onChange={() => toggleSelect(r.id)}
@@ -193,15 +205,32 @@ export function Products() {
       ),
     },
     {
+      key: 'name',
+      header: 'Produto',
+      render: (r) => (
+        <div className={styles.productCell}>
+          {r.image_url ? (
+            <img
+              src={r.image_url}
+              alt=""
+              className={styles.thumb}
+              loading="lazy"
+              decoding="async"
+              width={34}
+              height={46}
+            />
+          ) : (
+            <div className={styles.thumbPlaceholder} />
+          )}
+          <NameCell product={r} />
+        </div>
+      ),
+    },
+    {
       key: 'store',
       header: 'Loja',
       width: '120px',
       render: (r) => <span className={styles.storeBadge}>{formatStore(r.store)}</span>,
-    },
-    {
-      key: 'name',
-      header: 'Produto',
-      render: (r) => <NameCell product={r} />,
     },
     {
       key: 'current_price',
@@ -231,7 +260,7 @@ export function Products() {
         return (
           <div className={styles.rowActions}>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               loading={isRefreshing}
               disabled={isRefreshing}
@@ -246,21 +275,26 @@ export function Products() {
     },
   ];
 
+  const total = data?.total ?? products.length;
+
   return (
     <div className={styles.page}>
-      <Card
-        title={`Produtos monitorados${data ? ` (${data.total})` : ''}`}
-        action={
-          <div className={styles.actions}>
+      <PageHeader
+        title="Produtos monitorados"
+        subtitle={`${total} anúncio${total === 1 ? '' : 's'} · Amazon e Mercado Livre`}
+        actions={
+          <>
             <Button variant="secondary" size="sm" onClick={() => setModal('search')}>
               Buscar por nome
             </Button>
             <Button size="sm" onClick={() => setModal('url')}>
               + Adicionar URL
             </Button>
-          </div>
+          </>
         }
-      >
+      />
+
+      <Card>
         {selectedIds.size > 0 && (
           <div className={styles.toolbar}>
             <span className={styles.toolbarInfo}>

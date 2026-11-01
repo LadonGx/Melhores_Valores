@@ -6,6 +6,42 @@
   gap: 24px;
 }
 
+/* ─── Header (imagem + nome + selo loja + preço em destaque) ─────────────── */
+
+.productHeader {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.productHeaderThumb {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  object-fit: cover;
+  background: var(--color-surface-3);
+  flex-shrink: 0;
+}
+
+.productHeaderThumbPlaceholder {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-3);
+  flex-shrink: 0;
+}
+
+.productHeaderInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+
+
 .section {
   display: flex;
   flex-direction: column;
@@ -40,8 +76,8 @@
 }
 
 .statCard.highlight {
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+  background: var(--color-accent-tint);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 
 .statLabel {
@@ -57,7 +93,7 @@
 }
 
 .statCard.highlight .statValue {
-  color: var(--color-success);
+  color: var(--color-accent);
 }
 
 .statSub {
@@ -95,12 +131,12 @@
 }
 
 .storeBadge {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  padding: 2px 8px;
-  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-badge-text);
+  background: var(--color-badge-bg);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
 
@@ -124,7 +160,7 @@
 }
 
 .priceLowest {
-  color: var(--color-success);
+  color: var(--color-accent);
 }
 
 .priceUnavailable {

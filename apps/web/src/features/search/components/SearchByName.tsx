@@ -3,12 +3,11 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Button } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { Input } from '@/components/Input';
-import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { useAddProduct } from '@/features/products/hooks/useProducts';
 import { useSearchResults, useStartSearch } from '@/features/search/hooks/useSearch';
-import type { SearchResult } from '@mv/types';
 import { formatCurrency, formatStore } from '@mv/utils';
 import styles from './SearchByName.module.css';
 
@@ -98,70 +97,8 @@ export function SearchByName() {
   // "nenhum resultado" só após busca terminar de verdade (timeout ou resultados vazios confirmados)
   const showEmpty = !isWaiting && !!searchId && results !== undefined && !hasResults;
 
-  const columns: Column<SearchResult>[] = [
-    {
-      key: 'store',
-      header: 'Loja',
-      width: '110px',
-      render: (r) => <span className={styles.badge}>{formatStore(r.store)}</span>,
-    },
-    {
-      key: 'title',
-      header: 'Produto',
-      render: (r) => (
-        <a href={r.product_url} target="_blank" rel="noreferrer" className={styles.title}>
-          {r.title}
-        </a>
-      ),
-    },
-    {
-      key: 'price',
-      header: 'Preço',
-      width: '120px',
-      render: (r) => <strong>{r.price ? formatCurrency(r.price) : '—'}</strong>,
-    },
-    {
-      key: 'action',
-      header: '',
-      width: '110px',
-      render: (r) => {
-        const isMonitored = monitoredUrls.has(r.product_url);
-        const isCurrentlyAdding = addingUrls.has(r.product_url);
-        return (
-          <Button
-            size="sm"
-            variant={isMonitored ? 'ghost' : 'secondary'}
-            disabled={isMonitored || isCurrentlyAdding}
-            loading={isCurrentlyAdding}
-            onClick={() => {
-              setAddingUrls((prev) => new Set(prev).add(r.product_url));
-              addProduct(
-                {
-                  url: r.product_url,
-                  name: r.title,
-                  image_url: r.image_url ?? undefined,
-                  price: r.price ?? undefined,
-                  in_stock: true,
-                },
-                {
-                  onSuccess: () => {
-                    setMonitoredUrls((prev) => new Set(prev).add(r.product_url));
-                    setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
-                  },
-                  onError: () => {
-                    setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
-                    setErrorToast('Erro ao adicionar produto. Tente novamente.');
-                  },
-                },
-              );
-            }}
-          >
-            {isMonitored ? '✓ Adicionado' : 'Monitorar'}
-          </Button>
-        );
-      },
-    },
-  ];
+  // Índice do primeiro resultado com preço — recebe o selo "Menor preço"
+  const firstPricedIndex = hasResults ? results!.results.findIndex((r) => r.price != null) : -1;
 
   return (
     <div className={styles.wrapper}>
@@ -172,8 +109,6 @@ export function SearchByName() {
           {...register('query')}
         />
         <Input
-          className={styles.priceField}
-          style={{ width: 130 }}
           type="number"
           inputMode="decimal"
           step="0.01"
@@ -183,8 +118,6 @@ export function SearchByName() {
           {...register('minPrice')}
         />
         <Input
-          className={styles.priceField}
-          style={{ width: 130 }}
           type="number"
           inputMode="decimal"
           step="0.01"
@@ -193,7 +126,7 @@ export function SearchByName() {
           error={errors.maxPrice?.message}
           {...register('maxPrice')}
         />
-        <Button type="submit" loading={isStarting || isWaiting}>
+        <Button type="submit" className={styles.submitButton} loading={isStarting || isWaiting}>
           {isWaiting ? 'Buscando...' : 'Buscar'}
         </Button>
       </form>
@@ -207,6 +140,7 @@ export function SearchByName() {
 
       {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => (
         <div key={store} className={styles.warning}>
+          <Icon name="alert" size={16} className={styles.warningIcon} />
           <span>
             {formatStore(store)} está {describeStoreBlock(category)} — mostrando resultados de outras lojas.
           </span>
@@ -218,12 +152,76 @@ export function SearchByName() {
       )}
 
       {hasResults && (
-        <Table
-          columns={columns}
-          data={results!.results}
-          keyExtractor={(r) => r.id}
-          emptyMessage="Nenhum resultado encontrado."
-        />
+        <div className={styles.panel}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>
+              {results!.total} resultado{results!.total === 1 ? '' : 's'}
+            </span>
+          </div>
+          {results!.results.map((r, index) => {
+            const isMonitored = monitoredUrls.has(r.product_url);
+            const isCurrentlyAdding = addingUrls.has(r.product_url);
+            return (
+              <div key={r.id} className={styles.row}>
+                <span className={styles.badge}>{formatStore(r.store)}</span>
+                {r.image_url ? (
+                  <img
+                    src={r.image_url}
+                    alt=""
+                    className={styles.thumb}
+                    width={34}
+                    height={46}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : (
+                  <div className={styles.thumbPlaceholder} aria-hidden="true" />
+                )}
+                <a href={r.product_url} target="_blank" rel="noreferrer" className={styles.title}>
+                  {r.title}
+                </a>
+                <div className={styles.meta}>
+                  <span className={`${r.price ? styles.price : styles.noPrice} tabular`}>
+                    {r.price ? formatCurrency(r.price) : 'Sem preço'}
+                  </span>
+                  {index === firstPricedIndex && (
+                    <span className={styles.bestBadge}>Menor preço</span>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant={isMonitored ? 'ghost' : 'secondary'}
+                  disabled={isMonitored || isCurrentlyAdding}
+                  loading={isCurrentlyAdding}
+                  onClick={() => {
+                    setAddingUrls((prev) => new Set(prev).add(r.product_url));
+                    addProduct(
+                      {
+                        url: r.product_url,
+                        name: r.title,
+                        image_url: r.image_url ?? undefined,
+                        price: r.price ?? undefined,
+                        in_stock: true,
+                      },
+                      {
+                        onSuccess: () => {
+                          setMonitoredUrls((prev) => new Set(prev).add(r.product_url));
+                          setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
+                        },
+                        onError: () => {
+                          setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
+                          setErrorToast('Erro ao adicionar produto. Tente novamente.');
+                        },
+                      },
+                    );
+                  }}
+                >
+                  {isMonitored ? '✓ Adicionado' : 'Monitorar'}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {errorToast && (

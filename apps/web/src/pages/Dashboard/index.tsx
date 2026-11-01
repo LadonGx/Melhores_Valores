@@ -1,7 +1,10 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { Icon } from '@/components/Icon';
+import { PageHeader } from '@/components/PageHeader';
 import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
@@ -14,6 +17,49 @@ import { FilterMenu } from './FilterMenu';
 import { sortRows, type DashboardRow } from './sortRows';
 import { useDashboardFilter } from './useDashboardFilter';
 import styles from './Dashboard.module.css';
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return 'Bom dia!';
+  if (hour >= 12 && hour < 18) return 'Boa tarde!';
+  return 'Boa noite!';
+}
+
+// ─── Highlight card (Destaques) ────────────────────────────────────────────────
+
+function HighlightCard({ product, onOpen }: { product: Product; onOpen: () => void }) {
+  return (
+    <Card
+      className={styles.highlightCard}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <div className={styles.highlightImageWrap}>
+        {product.image_url ? (
+          <img
+            src={product.image_url}
+            alt=""
+            className={styles.highlightImage}
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <div className={styles.highlightImagePlaceholder} />
+        )}
+      </div>
+      <span className={styles.storeBadge}>{formatStore(product.store)}</span>
+      <span className={styles.highlightName}>{product.name ?? product.url}</span>
+      <span className={styles.highlightPrice}>{formatCurrency(product.current_price as number)}</span>
+    </Card>
+  );
+}
 
 // ─── Group row ────────────────────────────────────────────────────────────────
 
@@ -52,13 +98,20 @@ function GroupRow({
       <div className={styles.productRowMain}>
         <input
           type="checkbox"
+          aria-label={`Selecionar grupo ${group.name}`}
           className={styles.checkbox}
           checked={selected}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
         />
         {thumb ? (
-          <img src={thumb} alt="" className={styles.productThumb} loading="lazy" />
+          <img
+            src={thumb}
+            alt=""
+            className={styles.productThumb}
+            loading="lazy"
+            decoding="async"
+          />
         ) : (
           <div className={styles.productThumbPlaceholder} />
         )}
@@ -129,15 +182,23 @@ function ProductRow({
       <div className={styles.productRowMain}>
         <input
           type="checkbox"
+          aria-label={`Selecionar ${product.name ?? 'produto'}`}
           className={styles.checkbox}
           checked={selected}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
         />
-        {product.image_url && (
-          <img src={product.image_url} alt="" className={styles.productThumb} loading="lazy" />
+        {product.image_url ? (
+          <img
+            src={product.image_url}
+            alt=""
+            className={styles.productThumb}
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <div className={styles.productThumbPlaceholder} />
         )}
-        <span className={styles.storeBadge}>{formatStore(product.store)}</span>
         <div className={styles.productInfo}>
           <div className={styles.productNameRow}>
             <span className={styles.productName}>{product.name ?? product.url}</span>
@@ -167,6 +228,7 @@ function ProductRow({
           {product.in_stock === false && (
             <span className={styles.unavailableBadge}>Indisponível</span>
           )}
+          <span className={styles.storeBadge}>{formatStore(product.store)}</span>
           <span
             className={[
               styles.currentPrice,
@@ -197,6 +259,7 @@ function getGroupCheapestPrice(group: ProductGroup, products: Product[]): number
 }
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const { data, isLoading } = useProducts();
   const products = data?.products ?? [];
   const { groups, createGroup, deleteGroup, ungroupProduct } = useProductGroups();
@@ -246,6 +309,11 @@ export function Dashboard() {
 
   const allRowIds = visibleRows.map((row) => row.id);
   const allSelected = allRowIds.length > 0 && selectedIds.size === allRowIds.length;
+
+  const highlightProducts = [...products]
+    .filter((p): p is Product & { current_price: number } => p.current_price != null)
+    .sort((a, b) => a.current_price - b.current_price)
+    .slice(0, 4);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -301,6 +369,16 @@ export function Dashboard() {
 
   return (
     <div className={styles.page}>
+      <PageHeader
+        title={getGreeting()}
+        subtitle={`${data?.total ?? 0} anúncios monitorados na Amazon e no Mercado Livre`}
+        actions={
+          <Button variant="primary" onClick={() => navigate('/search')}>
+            Buscar produto
+          </Button>
+        }
+      />
+
       {/* ── Stats ── */}
       <div className={styles.stats}>
         <Card>
@@ -334,6 +412,10 @@ export function Dashboard() {
               </>
             ) : promotions.length === 1 ? (
               <>
+                <span className={styles.statEyebrow}>
+                  <Icon name="trendDown" size={13} />
+                  Promoção hoje
+                </span>
                 <span className={styles.statValue}>
                   {formatCurrency(promotions[0].current_price)}
                 </span>
@@ -350,6 +432,27 @@ export function Dashboard() {
           </div>
         </Card>
       </div>
+
+      {/* ── Destaques ── */}
+      {(isLoading || highlightProducts.length > 0) && (
+        <div className={styles.highlights}>
+          <h2 className={styles.highlightsTitle}>Destaques</h2>
+          <div className={styles.highlightsGrid}>
+            {isLoading
+              ? // Esqueletos com a mesma altura dos cards: reserva o espaço e evita layout shift (CLS)
+                Array.from({ length: 4 }, (_, i) => (
+                  <div key={i} className={styles.highlightSkeleton} aria-hidden="true" />
+                ))
+              : highlightProducts.map((p) => (
+                  <HighlightCard
+                    key={p.id}
+                    product={p}
+                    onOpen={() => setModalTarget({ type: 'product', id: p.id })}
+                  />
+                ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Product list ── */}
       <Card

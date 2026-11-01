@@ -12,12 +12,13 @@
   min-width: 200px;
   max-width: 280px;
   padding: 8px 10px;
-  background: var(--color-tooltip-bg, #1f2937);
-  color: var(--color-tooltip-text, #f9fafb);
+  background: var(--color-tooltip-bg);
+  color: var(--color-tooltip-text);
   font-size: 12px;
   line-height: 1.4;
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-lg);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s ease, transform 0.12s ease;
@@ -33,7 +34,7 @@
   left: 50%;
   transform: translateX(-50%);
   border: 5px solid transparent;
-  border-top-color: var(--color-tooltip-bg, #1f2937);
+  border-top-color: var(--color-tooltip-bg);
 }
 
 .wrapper:hover .bubble,

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { Tooltip } from '@/components/Tooltip';
@@ -40,6 +40,30 @@ function StatCardsRow({ items }: { items: StatCardItem[] }) {
           {item.sub && <span className={styles.statSub}>{item.sub}</span>}
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── Header block (imagem + linha de meta: loja, verificação, link) ───────────
+// O nome já está no título do Modal e o preço nos stat cards — aqui não se repete.
+
+function ProductHeader({ imageUrl, children }: { imageUrl?: string | null; children: ReactNode }) {
+  return (
+    <div className={styles.productHeader}>
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          className={styles.productHeaderThumb}
+          loading="lazy"
+          decoding="async"
+          width={56}
+          height={56}
+        />
+      ) : (
+        <div className={styles.productHeaderThumbPlaceholder} />
+      )}
+      <div className={styles.productHeaderInfo}>{children}</div>
     </div>
   );
 }
@@ -105,8 +129,7 @@ function SingleProductContent({ product }: { product: Product }) {
 
   return (
     <div className={styles.body}>
-      <StockWarningBanner product={product} />
-      <div className={styles.accordionMeta}>
+      <ProductHeader imageUrl={product.image_url}>
         <span className={styles.storeBadge}>{formatStore(product.store)}</span>
         {product.last_checked && (
           <span className={styles.date}>Verificado em {formatDate(product.last_checked)}</span>
@@ -114,7 +137,8 @@ function SingleProductContent({ product }: { product: Product }) {
         <a href={product.url} target="_blank" rel="noreferrer" className={styles.productLink}>
           Ver anúncio →
         </a>
-      </div>
+      </ProductHeader>
+      <StockWarningBanner product={product} />
       <StatCardsRow
         items={[
           { label: 'Preço atual', value: fmtPrice(data?.stats.current_price, isLoading) },
@@ -266,9 +290,19 @@ function GroupContent({
   );
   const lowestHistorical = groupStats?.lowest_price ?? null;
   const medianPrice = groupStats?.median_price ?? null;
+  const headerImage = groupProducts.find((p) => p.image_url)?.image_url;
 
   return (
     <div className={styles.body}>
+      <ProductHeader imageUrl={headerImage}>
+        <span className={styles.storeBadge}>
+          {groupProducts.length} anúncio{groupProducts.length === 1 ? '' : 's'}
+        </span>
+        {cheapest && (
+          <span className={styles.date}>Menor preço hoje na {formatStore(cheapest.store)}</span>
+        )}
+      </ProductHeader>
+
       {/* Stat cards */}
       <StatCardsRow
         items={[

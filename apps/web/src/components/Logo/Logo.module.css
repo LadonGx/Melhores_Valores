@@ -1,0 +1,29 @@
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.logo svg {
+  flex-shrink: 0;
+}
+
+.wordmark {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 17px;
+  line-height: 1.02;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+}
+
+.first {
+  color: var(--color-text);
+}
+
+.second {
+  color: var(--color-primary-soft);
+}

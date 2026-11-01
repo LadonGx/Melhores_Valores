@@ -1,61 +1,83 @@
 .sidebar {
   width: var(--sidebar-width);
   height: 100vh;
-  background: var(--color-surface);
+  background: var(--color-sidebar);
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  transition: width 0.2s ease;
+  overflow: hidden;
 }
 
+.sidebar.collapsed {
+  width: var(--rail-width);
+}
+
+/* ── Marca ─────────────────────────────── */
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 20px 16px;
-  border-bottom: 1px solid var(--color-border);
+  justify-content: space-between;
+  gap: 8px;
+  padding: 22px 14px 22px 20px;
 }
 
-.logo {
-  width: 32px;
-  height: 32px;
-  background: var(--color-primary);
-  border-radius: var(--radius-md);
+.brandLink {
+  display: flex;
+  min-width: 0;
+  border-radius: var(--radius-sm);
+}
+
+.toggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
-  font-weight: 700;
-  color: #fff;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-faint);
+  transition: color var(--transition-fast), background var(--transition-fast);
 }
 
-.brandName {
-  font-size: 13px;
-  font-weight: 600;
+.toggle:hover {
   color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  background: var(--color-surface-2);
 }
 
+.collapsed .brand {
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 0 14px;
+}
+
+/* ── Navegação ─────────────────────────── */
 .nav {
   flex: 1;
-  padding: 12px 8px;
+  padding: 6px 12px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+}
+
+.collapsed .nav {
+  padding: 6px 10px;
+  align-items: center;
 }
 
 .item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  gap: 12px;
+  height: 40px;
+  padding: 0 12px;
   border-radius: var(--radius-md);
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
-  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .item:hover {
@@ -64,27 +86,41 @@
 }
 
 .item.active {
-  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-  color: var(--color-primary);
+  background: var(--color-nav-active);
+  color: var(--color-text);
 }
 
-.footer {
-  padding: 16px;
-  border-top: 1px solid var(--color-border);
-}
-
-.apiStatus {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--color-text-faint);
-}
-
-.statusDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-success);
+.itemIcon {
   flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.item.active .itemIcon {
+  color: var(--color-primary-soft);
+  opacity: 1;
+}
+
+.collapsed .item {
+  width: 44px;
+  padding: 0;
+  justify-content: center;
+}
+
+.collapsed .label {
+  display: none;
+}
+
+/* ── Rodapé ────────────────────────────── */
+.footer {
+  padding: 16px 20px 20px;
+}
+
+.stores {
+  font-size: 11px;
+  color: var(--color-text-faint);
+  white-space: nowrap;
+}
+
+.collapsed .footer {
+  display: none;
 }
