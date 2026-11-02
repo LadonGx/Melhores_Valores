@@ -5,6 +5,7 @@ from .scrapers.playwright_scraper import fetch_html_playwright
 from .firecrawl_api import scrape_product_data
 from .store_detection import detect_store_from_url as detect_store
 from .adapters import amazon, mercadolivre
+from .store_health import record_failure, record_ok
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,19 @@ _NO_FIRECRAWL_BLOCKS = {"login_wall", "access_denied"}
 
 
 def scrape_product(url: str, store: str = None) -> dict | None:
+    """Cascata de scraping (ver _scrape_cascade) + registro da saúde da loja (canal "monitor")."""
+    if not store:
+        store = detect_store(url)
+
+    result, block_category = _scrape_cascade(url, store)
+    if result:
+        record_ok(store, "monitor")
+    else:
+        record_failure(store, "monitor", block_category)
+    return result
+
+
+def _scrape_cascade(url: str, store: str) -> tuple[dict | None, str | None]:
     """
     Orchestrates scraping in cascade:
       Level 1 → httpx simple    (free, ~1s)   — skipped for JS-heavy stores
@@ -80,13 +94,10 @@ def scrape_product(url: str, store: str = None) -> dict | None:
     Firecrawl is skipped when Level 2 confirms a login_wall or access_denied block
     (authentication blocks cannot be resolved by a different scraping service).
     """
-    if not store:
-        store = detect_store(url)
-
     adapter = ADAPTERS.get(store)
     if not adapter:
         logger.warning("Loja não suportada: store=%s | url=%s", store, url)
-        return None
+        return None, None
 
     # --- Level 1: httpx simple ---
     if store not in JS_REQUIRED_STORES:
@@ -96,26 +107,29 @@ def scrape_product(url: str, store: str = None) -> dict | None:
             result = adapter(html)
             _log_cascade_result(1, store, result, url)
             if _result_is_acceptable(result):
-                return result
+                return result, None
 
     # --- Level 2: Playwright ---
     logger.debug("Cascata nível 2 iniciando | store=%s | url=%s", store, url)
+    seen_block: str | None = None
     html = fetch_html_playwright(url)
     if html:
         result = adapter(html)
+        seen_block = result.get("block_category") if result else None
         _log_cascade_result(2, store, result, url)
         if _result_is_acceptable(result):
-            return result
+            return result, None
         # Authentication blocks cannot be solved by Firecrawl — skip to save credits
         if result and result.get("block_category") in _NO_FIRECRAWL_BLOCKS:
             logger.warning(
                 "Bloqueio '%s' no nível 2 — Firecrawl não ajudaria, cancelando | store=%s | url=%s",
                 result["block_category"], store, url,
             )
-            return None
+            return None, result["block_category"]
 
     # --- Level 3: Firecrawl API (paid — last resort) ---
     logger.warning(
         "Cascata nível 3 (Firecrawl) — consumindo crédito | store=%s | url=%s", store, url
     )
-    return scrape_product_data(url)
+    firecrawl_result = scrape_product_data(url)
+    return firecrawl_result, (None if firecrawl_result else seen_block)

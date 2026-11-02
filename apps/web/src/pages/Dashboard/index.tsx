@@ -1,9 +1,16 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { EmptyState } from '@/components/EmptyState';
+import { Icon } from '@/components/Icon';
+import { PageHeader } from '@/components/PageHeader';
+import { SelectionBar } from '@/components/SelectionBar';
+import { NextCheckCard } from '@/features/schedule/components/NextCheckCard';
 import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
+import { formatLastChecked, isStale } from '@/features/products/formatLastChecked';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
 import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
@@ -14,6 +21,58 @@ import { FilterMenu } from './FilterMenu';
 import { sortRows, type DashboardRow } from './sortRows';
 import { useDashboardFilter } from './useDashboardFilter';
 import styles from './Dashboard.module.css';
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return 'Bom dia!';
+  if (hour >= 12 && hour < 18) return 'Boa tarde!';
+  return 'Boa noite!';
+}
+
+// ─── Highlight card (Destaques) ────────────────────────────────────────────────
+
+function HighlightCard({
+  product,
+  onOpen,
+  priority = false,
+}: {
+  product: Product;
+  onOpen: () => void;
+  /** Imagem acima da dobra: sem lazy-load (melhora o LCP). */
+  priority?: boolean;
+}) {
+  return (
+    <Card
+      className={styles.highlightCard}
+      onClick={onOpen}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+    >
+      <div className={styles.highlightImageWrap}>
+        {product.image_url ? (
+          <img
+            src={product.image_url}
+            alt=""
+            className={styles.highlightImage}
+            loading={priority ? 'eager' : 'lazy'}
+            decoding="async"
+          />
+        ) : (
+          <div className={styles.highlightImagePlaceholder} />
+        )}
+      </div>
+      <span className={styles.storeBadge}>{formatStore(product.store)}</span>
+      <span className={styles.highlightName}>{product.name ?? product.url}</span>
+      <span className={styles.highlightPrice}>{formatCurrency(product.current_price as number)}</span>
+    </Card>
+  );
+}
 
 // ─── Group row ────────────────────────────────────────────────────────────────
 
@@ -42,6 +101,12 @@ function GroupRow({
   const cheapest = sorted.find((p) => p.current_price != null);
   const thumb = groupProducts.find((p) => p.image_url)?.image_url;
   const affected = groupProducts.filter((p) => p.in_stock === false);
+  const latestChecked = groupProducts.reduce<string | null>((latest, p) => {
+    if (!p.last_checked) return latest;
+    if (!latest || new Date(p.last_checked) > new Date(latest)) return p.last_checked;
+    return latest;
+  }, null);
+  const groupStale = latestChecked != null && isStale(latestChecked);
 
   return (
     <div
@@ -52,13 +117,20 @@ function GroupRow({
       <div className={styles.productRowMain}>
         <input
           type="checkbox"
+          aria-label={`Selecionar grupo ${group.name}`}
           className={styles.checkbox}
           checked={selected}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
         />
         {thumb ? (
-          <img src={thumb} alt="" className={styles.productThumb} loading="lazy" />
+          <img
+            src={thumb}
+            alt=""
+            className={styles.productThumb}
+            loading="lazy"
+            decoding="async"
+          />
         ) : (
           <div className={styles.productThumbPlaceholder} />
         )}
@@ -85,6 +157,15 @@ function GroupRow({
               </span>
             ))}
             <span className={styles.listingCount}>{groupProducts.length} anúncios</span>
+            {latestChecked && (
+              <span
+                className={[styles.lastChecked, groupStale ? styles.lastCheckedStale : ''].join(' ')}
+                title={groupStale ? 'Sem verificação há mais de 12 h' : formatDate(latestChecked)}
+              >
+                {groupStale && <Icon name="alert" size={12} />}
+                · Verificado {formatLastChecked(latestChecked)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -129,15 +210,23 @@ function ProductRow({
       <div className={styles.productRowMain}>
         <input
           type="checkbox"
+          aria-label={`Selecionar ${product.name ?? 'produto'}`}
           className={styles.checkbox}
           checked={selected}
           onChange={onToggleSelect}
           onClick={(e) => e.stopPropagation()}
         />
-        {product.image_url && (
-          <img src={product.image_url} alt="" className={styles.productThumb} loading="lazy" />
+        {product.image_url ? (
+          <img
+            src={product.image_url}
+            alt=""
+            className={styles.productThumb}
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <div className={styles.productThumbPlaceholder} />
         )}
-        <span className={styles.storeBadge}>{formatStore(product.store)}</span>
         <div className={styles.productInfo}>
           <div className={styles.productNameRow}>
             <span className={styles.productName}>{product.name ?? product.url}</span>
@@ -155,10 +244,25 @@ function ProductRow({
               </Tooltip>
             )}
           </div>
-          {product.last_checked && (
-            <span className={styles.lastChecked}>
-              Verificado em {formatDate(product.last_checked)}
+          {product.last_checked ? (
+            <span
+              className={[
+                styles.lastChecked,
+                isStale(product.last_checked) ? styles.lastCheckedStale : '',
+              ].join(' ')}
+              title={
+                isStale(product.last_checked)
+                  ? 'Sem verificação há mais de 12 h'
+                  : formatDate(product.last_checked)
+              }
+            >
+              {isStale(product.last_checked) && <Icon name="alert" size={12} />}
+              Verificado {formatLastChecked(product.last_checked)}
               {isPaused ? ' · Pausado' : ''}
+            </span>
+          ) : (
+            <span className={styles.lastCheckedNone}>
+              Ainda não verificado{isPaused ? ' · Pausado' : ''}
             </span>
           )}
         </div>
@@ -167,6 +271,7 @@ function ProductRow({
           {product.in_stock === false && (
             <span className={styles.unavailableBadge}>Indisponível</span>
           )}
+          <span className={styles.storeBadge}>{formatStore(product.store)}</span>
           <span
             className={[
               styles.currentPrice,
@@ -197,6 +302,7 @@ function getGroupCheapestPrice(group: ProductGroup, products: Product[]): number
 }
 
 export function Dashboard() {
+  const navigate = useNavigate();
   const { data, isLoading } = useProducts();
   const products = data?.products ?? [];
   const { groups, createGroup, deleteGroup, ungroupProduct } = useProductGroups();
@@ -246,6 +352,11 @@ export function Dashboard() {
 
   const allRowIds = visibleRows.map((row) => row.id);
   const allSelected = allRowIds.length > 0 && selectedIds.size === allRowIds.length;
+
+  const highlightProducts = [...products]
+    .filter((p): p is Product & { current_price: number } => p.current_price != null)
+    .sort((a, b) => a.current_price - b.current_price)
+    .slice(0, 4);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -301,6 +412,16 @@ export function Dashboard() {
 
   return (
     <div className={styles.page}>
+      <PageHeader
+        title={getGreeting()}
+        subtitle={`${data?.total ?? 0} anúncios monitorados na Amazon e no Mercado Livre`}
+        actions={
+          <Button variant="primary" onClick={() => navigate('/search')}>
+            Buscar produto
+          </Button>
+        }
+      />
+
       {/* ── Stats ── */}
       <div className={styles.stats}>
         <Card>
@@ -334,6 +455,10 @@ export function Dashboard() {
               </>
             ) : promotions.length === 1 ? (
               <>
+                <span className={styles.statEyebrow}>
+                  <Icon name="trendDown" size={13} />
+                  Promoção hoje
+                </span>
                 <span className={styles.statValue}>
                   {formatCurrency(promotions[0].current_price)}
                 </span>
@@ -349,13 +474,48 @@ export function Dashboard() {
             )}
           </div>
         </Card>
+        <NextCheckCard />
       </div>
+
+      {/* ── Destaques ── */}
+      {(isLoading || highlightProducts.length > 0) && (
+        <div className={styles.highlights}>
+          <h2 className={styles.highlightsTitle}>Destaques</h2>
+          <div className={styles.highlightsGrid}>
+            {isLoading
+              ? // Esqueletos com a mesma altura dos cards: reserva o espaço e evita layout shift (CLS)
+                Array.from({ length: 4 }, (_, i) => (
+                  <div key={i} className={styles.highlightSkeleton} aria-hidden="true" />
+                ))
+              : highlightProducts.map((p, i) => (
+                  <HighlightCard
+                    key={p.id}
+                    product={p}
+                    priority={i < 4}
+                    onOpen={() => setModalTarget({ type: 'product', id: p.id })}
+                  />
+                ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Product list ── */}
       <Card
         title="Produtos monitorados"
         action={
-          <FilterMenu
+          <div className={styles.listActions}>
+            {allRowIds.length > 0 && (
+              <label className={styles.selectAll}>
+                {allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
+                <input
+                  type="checkbox"
+                  className={styles.checkbox}
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                />
+              </label>
+            )}
+            <FilterMenu
             rows={allRows}
             sortOption={sortOption}
             hiddenIds={hiddenIds}
@@ -363,70 +523,37 @@ export function Dashboard() {
             onToggleHidden={toggleHidden}
             onShowAll={showAll}
             onReset={resetFilter}
-          />
+            />
+          </div>
         }
       >
-        {/* Selection toolbar */}
-        {selectedIds.size > 0 && (
-          <div className={styles.toolbar}>
-            <span className={styles.toolbarInfo}>
-              {selectedIds.size} selecionado{selectedIds.size !== 1 ? 's' : ''}
-            </span>
-
-            {showNameInput ? (
-              <div className={styles.nameInputRow}>
-                <input
-                  className={styles.nameInput}
-                  placeholder="Nome do grupo..."
-                  value={pendingGroupName}
-                  onChange={(e) => setPendingGroupName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGroup(); }}
-                  autoFocus
-                />
-                <Button
-                  size="sm"
-                  disabled={pendingGroupName.trim().length === 0}
-                  onClick={handleCreateGroup}
-                >
-                  Confirmar
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setShowNameInput(false)}>
-                  Voltar
-                </Button>
-              </div>
-            ) : (
-              <div className={styles.toolbarActions}>
-                <Button size="sm" variant="ghost" onClick={toggleSelectAll}>
-                  {allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={selectedGroups.length > 0 || selectedProducts.length < 2}
-                  title={selectedGroups.length > 0 ? 'Desmarque os grupos para criar um novo grupo' : undefined}
-                  onClick={() => setShowNameInput(true)}
-                >
-                  Agrupar anúncios
-                </Button>
-                <Button size="sm" variant="danger" onClick={() => setConfirmDeleteOpen(true)}>
-                  Excluir
-                </Button>
-                <Button size="sm" variant="ghost" onClick={clearSelection}>
-                  Cancelar
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
         {isLoading ? (
           <p className={styles.empty}>Carregando...</p>
         ) : products.length === 0 ? (
-          <p className={styles.empty}>
-            Nenhum produto monitorado.{' '}
-            <a href="/products">Adicione seu primeiro produto.</a>
-          </p>
+          <EmptyState
+            title="Nenhum produto monitorado ainda"
+            description="Busque pelo nome ou cole o link de um anúncio da Amazon ou do Mercado Livre — a gente avisa quando o preço cair."
+            actions={
+              <>
+                <Button variant="primary" onClick={() => navigate('/search')}>
+                  Buscar produto
+                </Button>
+                <Button variant="secondary" onClick={() => navigate('/products?adicionar=url')}>
+                  Adicionar por URL
+                </Button>
+              </>
+            }
+          />
         ) : visibleRows.length === 0 ? (
-          <p className={styles.empty}>Nenhum produto corresponde ao filtro atual.</p>
+          <EmptyState
+            icon={null}
+            title="Nenhum produto corresponde ao filtro atual"
+            actions={
+              <Button variant="secondary" size="sm" onClick={showAll}>
+                Mostrar todos
+              </Button>
+            }
+          />
         ) : (
           <div className={styles.productList}>
             {visibleRows.map((row) => {
@@ -459,6 +586,56 @@ export function Dashboard() {
           </div>
         )}
       </Card>
+
+      {/* ── Ações em lote (barra flutuante) ── */}
+      <SelectionBar count={selectedIds.size} onClear={clearSelection}>
+        {showNameInput ? (
+          <div className={styles.nameInputRow}>
+            <input
+              className={styles.nameInput}
+              placeholder="Nome do grupo..."
+              aria-label="Nome do grupo"
+              value={pendingGroupName}
+              onChange={(e) => setPendingGroupName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGroup(); }}
+              autoFocus
+            />
+            <Button
+              size="sm"
+              disabled={pendingGroupName.trim().length === 0}
+              onClick={handleCreateGroup}
+            >
+              <Icon name="check" size={14} />
+              Confirmar
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowNameInput(false)}>
+              Voltar
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Button
+              size="sm"
+              disabled={selectedGroups.length > 0 || selectedProducts.length < 2}
+              title={
+                selectedGroups.length > 0
+                  ? 'Desmarque os grupos para criar um novo grupo'
+                  : selectedProducts.length < 2
+                    ? 'Selecione pelo menos 2 anúncios para agrupar'
+                    : undefined
+              }
+              onClick={() => setShowNameInput(true)}
+            >
+              <Icon name="layers" size={14} />
+              Agrupar
+            </Button>
+            <Button size="sm" variant="dangerOutline" onClick={() => setConfirmDeleteOpen(true)}>
+              <Icon name="trash" size={14} />
+              Excluir
+            </Button>
+          </>
+        )}
+      </SelectionBar>
 
       {/* ── Detail modal ── */}
       <ProductDetailModal

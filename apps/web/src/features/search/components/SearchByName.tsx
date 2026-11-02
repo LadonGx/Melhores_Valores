@@ -2,14 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { Input } from '@/components/Input';
-import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
+import { StoreStatusDot } from '@/features/stores/components/StoreStatusDot';
+import { storesHealthKey, useStoresHealth } from '@/features/stores/hooks/useStoresHealth';
 import { useAddProduct } from '@/features/products/hooks/useProducts';
 import { useSearchResults, useStartSearch } from '@/features/search/hooks/useSearch';
-import type { SearchResult } from '@mv/types';
 import { formatCurrency, formatStore } from '@mv/utils';
+import type { StoresHealthResponse } from '@mv/types';
 import styles from './SearchByName.module.css';
 
 const BLOCK_CATEGORY_LABELS: Record<string, string> = {
@@ -44,6 +47,24 @@ type FormValues = z.infer<typeof schema>;
 // Tempo máximo aguardando o Celery processar (scrapers com Playwright podem ser lentos)
 const SEARCH_TIMEOUT_MS = 60_000;
 
+// Quantidade de linhas-esqueleto mostradas enquanto a busca não responde
+const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
+
+// Exemplos clicáveis do convite inicial — só preenchem o campo, não disparam a busca
+const INVITE_EXAMPLES = ['Kindle Paperwhite', 'Echo Dot', '20th Century Boys'];
+
+/** Frase do aviso de loja bloqueada sobre o canal monitor: a verificação de preço dos
+ *  anúncios dessa loja é afetada junto? Sem dados de saúde, devolve null (aviso fica como está). */
+function describeMonitorImpact(store: string, health?: StoresHealthResponse): string | null {
+  const entry = health?.stores.find((s) => s.store === store);
+  const monitorStatus = entry?.channels.monitor.status;
+  if (!monitorStatus || monitorStatus === 'unknown') return null;
+  if (monitorStatus === 'ok') {
+    return `Os anúncios do ${formatStore(store)} que você já monitora continuam sendo verificados normalmente.`;
+  }
+  return `Os anúncios do ${formatStore(store)} que você monitora também estão com falha na verificação de preço.`;
+}
+
 export function SearchByName() {
   const [searchId, setSearchId] = useState('');
   // isSearchActive permanece true desde o submit até resultados chegarem ou timeout
@@ -57,10 +78,13 @@ export function SearchByName() {
   const { mutate: startSearch, isPending: isStarting } = useStartSearch();
   const { data: results, isFetching } = useSearchResults(searchId);
   const { mutate: addProduct } = useAddProduct();
+  const queryClient = useQueryClient();
+  // Saúde das lojas (canal search/monitor). API lenta ou falha → simplesmente não exibe.
+  const { data: storesHealth } = useStoresHealth();
 
   const closeErrorToast = useCallback(() => setErrorToast(null), []);
 
-  const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
   });
 
@@ -98,70 +122,21 @@ export function SearchByName() {
   // "nenhum resultado" só após busca terminar de verdade (timeout ou resultados vazios confirmados)
   const showEmpty = !isWaiting && !!searchId && results !== undefined && !hasResults;
 
-  const columns: Column<SearchResult>[] = [
-    {
-      key: 'store',
-      header: 'Loja',
-      width: '110px',
-      render: (r) => <span className={styles.badge}>{formatStore(r.store)}</span>,
-    },
-    {
-      key: 'title',
-      header: 'Produto',
-      render: (r) => (
-        <a href={r.product_url} target="_blank" rel="noreferrer" className={styles.title}>
-          {r.title}
-        </a>
-      ),
-    },
-    {
-      key: 'price',
-      header: 'Preço',
-      width: '120px',
-      render: (r) => <strong>{r.price ? formatCurrency(r.price) : '—'}</strong>,
-    },
-    {
-      key: 'action',
-      header: '',
-      width: '110px',
-      render: (r) => {
-        const isMonitored = monitoredUrls.has(r.product_url);
-        const isCurrentlyAdding = addingUrls.has(r.product_url);
-        return (
-          <Button
-            size="sm"
-            variant={isMonitored ? 'ghost' : 'secondary'}
-            disabled={isMonitored || isCurrentlyAdding}
-            loading={isCurrentlyAdding}
-            onClick={() => {
-              setAddingUrls((prev) => new Set(prev).add(r.product_url));
-              addProduct(
-                {
-                  url: r.product_url,
-                  name: r.title,
-                  image_url: r.image_url ?? undefined,
-                  price: r.price ?? undefined,
-                  in_stock: true,
-                },
-                {
-                  onSuccess: () => {
-                    setMonitoredUrls((prev) => new Set(prev).add(r.product_url));
-                    setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
-                  },
-                  onError: () => {
-                    setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
-                    setErrorToast('Erro ao adicionar produto. Tente novamente.');
-                  },
-                },
-              );
-            }}
-          >
-            {isMonitored ? '✓ Adicionado' : 'Monitorar'}
-          </Button>
-        );
-      },
-    },
-  ];
+  // Quando uma busca termina (resultados ou vazio confirmado), refresca a saúde das lojas —
+  // a sidebar e a linha de status sob o formulário refletem novas falhas na hora.
+  const searchFinished = hasResults || showEmpty;
+  useEffect(() => {
+    if (searchFinished) {
+      void queryClient.invalidateQueries({ queryKey: storesHealthKey });
+    }
+  }, [searchFinished, queryClient]);
+
+  // Convite inicial: só antes da primeira busca (nisso os chips não quebram a regra
+  // dos testes de haver exatamente um botão durante o carregamento).
+  const showInvite = !isWaiting && !searchId && !hasResults;
+
+  // Índice do primeiro resultado com preço — recebe o selo "Menor preço"
+  const firstPricedIndex = hasResults ? results!.results.findIndex((r) => r.price != null) : -1;
 
   return (
     <div className={styles.wrapper}>
@@ -172,8 +147,6 @@ export function SearchByName() {
           {...register('query')}
         />
         <Input
-          className={styles.priceField}
-          style={{ width: 130 }}
           type="number"
           inputMode="decimal"
           step="0.01"
@@ -183,8 +156,6 @@ export function SearchByName() {
           {...register('minPrice')}
         />
         <Input
-          className={styles.priceField}
-          style={{ width: 130 }}
           type="number"
           inputMode="decimal"
           step="0.01"
@@ -193,10 +164,46 @@ export function SearchByName() {
           error={errors.maxPrice?.message}
           {...register('maxPrice')}
         />
-        <Button type="submit" loading={isStarting || isWaiting}>
+        <Button type="submit" className={styles.submitButton} loading={isStarting || isWaiting}>
           {isWaiting ? 'Buscando...' : 'Buscar'}
         </Button>
       </form>
+
+      {/* Status das lojas (canal busca) — discreta; loading/erro de API → não mostra nada */}
+      {storesHealth && storesHealth.stores.length > 0 && (
+        <div className={styles.storeStatus}>
+          {storesHealth.stores.map((s) => (
+            <span key={s.store} className={styles.storeStatusItem}>
+              <StoreStatusDot status={s.channels.search.status} />
+              <span>
+                {s.label} · busca {s.channels.search.detail}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Convite inicial — some durante o carregamento e depois da primeira busca */}
+      {showInvite && (
+        <div className={styles.invite}>
+          <div className={styles.inviteText}>
+            <p className={styles.inviteTitle}>Comece pelo nome do produto</p>
+            <p className={styles.inviteHint}>Toque em um exemplo para preencher o campo:</p>
+          </div>
+          <div className={styles.inviteChips}>
+            {INVITE_EXAMPLES.map((example) => (
+              <button
+                key={example}
+                type="button"
+                className={styles.inviteChip}
+                onClick={() => setValue('query', example)}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isWaiting && (
         <div className={styles.status}>
@@ -205,25 +212,129 @@ export function SearchByName() {
         </div>
       )}
 
-      {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => (
-        <div key={store} className={styles.warning}>
-          <span>
-            {formatStore(store)} está {describeStoreBlock(category)} — mostrando resultados de outras lojas.
-          </span>
+      {isWaiting && (
+        // Esqueleto com a mesma geometria do painel real — evita salto de layout
+        // quando os resultados chegam. Sem <button> (o teste exige um único botão
+        // durante o loading); tudo aria-hidden.
+        <div className={`${styles.panel} ${styles.skeletonPanel}`} aria-hidden="true">
+          <div className={styles.panelHeader}>
+            <span className={`${styles.skeletonBar} ${styles.skeletonHeaderBar}`} />
+          </div>
+          {SKELETON_ROWS.map((i) => (
+            <div key={i} className={styles.row}>
+              <span className={styles.skeletonPill} />
+              <div className={styles.thumbPlaceholder} />
+              <div className={styles.skeletonLines}>
+                <span className={`${styles.skeletonBar} ${styles.skeletonLineWide}`} />
+                <span className={`${styles.skeletonBar} ${styles.skeletonLineShort}`} />
+              </div>
+              <div className={styles.meta}>
+                <span className={styles.skeletonPrice} />
+              </div>
+              <span className={styles.skeletonButton} />
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+
+      {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => {
+        const impact = describeMonitorImpact(store, storesHealth);
+        return (
+          <div key={store} className={styles.warning}>
+            <Icon name="alert" size={16} className={styles.warningIcon} />
+            <div className={styles.warningContent}>
+              {/* Frase original preservada (testes dependem dela) + impacto no canal monitor */}
+              <strong>
+                {formatStore(store)} está {describeStoreBlock(category)} — mostrando resultados de
+                outras lojas.
+              </strong>
+              {impact && <span>{impact}</span>}
+            </div>
+          </div>
+        );
+      })}
 
       {showEmpty && (
-        <p className={styles.empty}>Nenhum resultado encontrado. Tente um termo diferente.</p>
+        <div className={styles.emptyBox}>
+          <p className={styles.empty}>Nenhum resultado encontrado. Tente um termo diferente.</p>
+          <p className={styles.emptyHint}>
+            Verifique o termo digitado e, se você preencheu a faixa de preço, tente de novo sem
+            mínimo/máximo.
+          </p>
+        </div>
       )}
 
       {hasResults && (
-        <Table
-          columns={columns}
-          data={results!.results}
-          keyExtractor={(r) => r.id}
-          emptyMessage="Nenhum resultado encontrado."
-        />
+        <div className={styles.panel}>
+          <div className={styles.panelHeader}>
+            <span className={styles.panelTitle}>
+              {results!.total} resultado{results!.total === 1 ? '' : 's'}
+            </span>
+          </div>
+          {results!.results.map((r, index) => {
+            const isMonitored = monitoredUrls.has(r.product_url);
+            const isCurrentlyAdding = addingUrls.has(r.product_url);
+            return (
+              <div key={r.id} className={styles.row}>
+                <span className={styles.badge}>{formatStore(r.store)}</span>
+                {r.image_url ? (
+                  <img
+                    src={r.image_url}
+                    alt=""
+                    className={styles.thumb}
+                    width={44}
+                    height={56}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : (
+                  <div className={styles.thumbPlaceholder} aria-hidden="true" />
+                )}
+                <a href={r.product_url} target="_blank" rel="noreferrer" className={styles.title}>
+                  {r.title}
+                </a>
+                <div className={styles.meta}>
+                  <span className={`${r.price ? styles.price : styles.noPrice} tabular`}>
+                    {r.price ? formatCurrency(r.price) : 'Sem preço'}
+                  </span>
+                  {index === firstPricedIndex && (
+                    <span className={styles.bestBadge}>Menor preço</span>
+                  )}
+                </div>
+                <Button
+                  size="sm"
+                  variant={isMonitored ? 'ghost' : 'secondary'}
+                  disabled={isMonitored || isCurrentlyAdding}
+                  loading={isCurrentlyAdding}
+                  onClick={() => {
+                    setAddingUrls((prev) => new Set(prev).add(r.product_url));
+                    addProduct(
+                      {
+                        url: r.product_url,
+                        name: r.title,
+                        image_url: r.image_url ?? undefined,
+                        price: r.price ?? undefined,
+                        in_stock: true,
+                      },
+                      {
+                        onSuccess: () => {
+                          setMonitoredUrls((prev) => new Set(prev).add(r.product_url));
+                          setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
+                        },
+                        onError: () => {
+                          setAddingUrls((prev) => { const s = new Set(prev); s.delete(r.product_url); return s; });
+                          setErrorToast('Erro ao adicionar produto. Tente novamente.');
+                        },
+                      },
+                    );
+                  }}
+                >
+                  {isMonitored ? '✓ Adicionado' : 'Monitorar'}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {errorToast && (

@@ -30,3 +30,29 @@ sys.modules["dotenv"] = dotenv_stub
 # Stub httpx (used in base_scraper and firecrawl_api, mocked per-test)
 httpx_stub = MagicMock()
 sys.modules["httpx"] = httpx_stub
+
+
+# ── Saúde das lojas: nunca escrever no Redis real durante os testes ──────────
+import pytest  # noqa: E402
+
+
+class FakeRedisHash:
+    """Redis mínimo em memória (hset/hgetall) para execution.store_health."""
+
+    def __init__(self):
+        self.data: dict[str, dict[str, str]] = {}
+
+    def hset(self, key, mapping):
+        self.data.setdefault(key, {}).update(mapping)
+
+    def hgetall(self, key):
+        return dict(self.data.get(key, {}))
+
+
+@pytest.fixture(autouse=True)
+def fake_store_health_redis(monkeypatch):
+    from execution import store_health
+
+    fake = FakeRedisHash()
+    monkeypatch.setattr(store_health, "redis_client", fake)
+    return fake

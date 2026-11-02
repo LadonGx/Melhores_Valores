@@ -150,3 +150,38 @@ export type RefreshPriceResponse =
   | { status: 'ok'; price: number; in_stock: boolean; name: string | null; source: string }
   | { status: 'out_of_stock'; in_stock: false; detail: string }
   | { status: 'error'; reason: 'unavailable' | 'blocked' | 'scraping_failed' | 'exception'; detail: string };
+
+/** GET /schedule/next-check — próxima verificação automática (Celery Beat). */
+export interface NextCheckResponse {
+  /** ISO 8601 com fuso; null se não houver agendamento configurado. */
+  next_run: string | null;
+  interval_hours: number | null;
+}
+
+/** GET /stores/health — saúde de cada loja por canal. */
+export type StoreHealthStatus = 'ok' | 'partial' | 'blocked' | 'error' | 'unknown';
+
+export interface StoreChannelHealth {
+  status: Exclude<StoreHealthStatus, 'partial'>;
+  /** Texto curto para o usuário: "funcionando", "exigindo login", "sem verificações recentes"… */
+  detail: string;
+  category: string | null;
+  last_ok_at: string | null;
+  last_fail_at: string | null;
+}
+
+export interface StoreHealth {
+  store: string;
+  label: string;
+  status: StoreHealthStatus;
+  channels: {
+    /** Busca por nome */
+    search: StoreChannelHealth;
+    /** Verificação de preço dos anúncios monitorados */
+    monitor: StoreChannelHealth;
+  };
+}
+
+export interface StoresHealthResponse {
+  stores: StoreHealth[];
+}

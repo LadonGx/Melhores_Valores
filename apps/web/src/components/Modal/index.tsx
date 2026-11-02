@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { Icon } from '@/components/Icon';
 import styles from './Modal.module.css';
 
 interface ModalProps {
@@ -28,7 +29,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
         <div className={styles.header}>
           <h2 className={styles.title}>{title}</h2>
           <button className={styles.close} onClick={onClose} aria-label="Fechar">
-            ✕
+            <Icon name="x" size={16} />
           </button>
         </div>
         <div className={styles.body}>{children}</div>

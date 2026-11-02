@@ -7,6 +7,7 @@ from .search_scrapers.mercadolivre_search import search_mercadolivre
 from .search_scrapers.errors              import StoreBlockedError
 from .db_client                           import save_search_results
 from .search_status                       import set_search_warnings
+from .store_health                        import record_failure, record_ok
 
 logger = logging.getLogger(__name__)
 
@@ -187,14 +188,17 @@ def run_product_search(
                 store_name, len(results), query,
             )
             all_results.extend(results)
+            record_ok(store_name.removesuffix("_search"), "search")
         except StoreBlockedError as e:
             blocked_stores[store_name.removesuffix("_search")] = e.category
+            record_failure(store_name.removesuffix("_search"), "search", e.category)
             logger.warning(
                 "Busca | store=%s bloqueado (%s) | query='%s'",
                 store_name, e.category, query,
             )
         except Exception:
             logger.exception("Busca | store=%s falhou | query='%s'", store_name, query)
+            record_failure(store_name.removesuffix("_search"), "search")
 
     if blocked_stores:
         set_search_warnings(search_id, blocked_stores)

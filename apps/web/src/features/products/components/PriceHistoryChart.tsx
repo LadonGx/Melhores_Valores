@@ -49,8 +49,35 @@ interface PriceHistoryChartProps {
   loading?: boolean;
 }
 
+interface LowestPriceDotProps {
+  cx?: number;
+  cy?: number;
+  index?: number;
+  payload?: PriceChartPoint;
+}
+
 export function PriceHistoryChart({ points, range, onRangeChange, loading }: PriceHistoryChartProps) {
   const hasData = points.length > 0;
+
+  const definedPrices = points
+    .map((p) => p.price)
+    .filter((price): price is number => price != null);
+  const lowestPrice = definedPrices.length > 0 ? Math.min(...definedPrices) : null;
+
+  const renderDot = ({ cx, cy, index, payload }: LowestPriceDotProps) => {
+    const isLowest = lowestPrice != null && payload?.price === lowestPrice;
+    return (
+      <circle
+        key={`price-dot-${index}`}
+        cx={cx}
+        cy={cy}
+        r={isLowest ? 4 : 0}
+        fill="var(--color-accent)"
+        stroke="var(--color-surface-2)"
+        strokeWidth={isLowest ? 2 : 0}
+      />
+    );
+  };
 
   return (
     <div className={styles.wrapper}>
@@ -75,11 +102,11 @@ export function PriceHistoryChart({ points, range, onRangeChange, loading }: Pri
         <div className={styles.chartBox}>
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid vertical={false} stroke="var(--color-border)" />
+              <CartesianGrid vertical={false} stroke="var(--color-border)" strokeDasharray="4 4" />
               <XAxis
                 dataKey="scrapedAt"
                 tickFormatter={formatShortDate}
-                stroke="var(--color-text-muted)"
+                stroke="var(--color-text-faint)"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
@@ -87,7 +114,7 @@ export function PriceHistoryChart({ points, range, onRangeChange, loading }: Pri
               />
               <YAxis
                 dataKey="price"
-                stroke="var(--color-text-muted)"
+                stroke="var(--color-text-faint)"
                 fontSize={11}
                 tickLine={false}
                 axisLine={false}
@@ -102,13 +129,13 @@ export function PriceHistoryChart({ points, range, onRangeChange, loading }: Pri
               <Area
                 type="monotone"
                 dataKey="price"
-                stroke="var(--color-primary)"
+                stroke="var(--color-primary-soft)"
                 strokeWidth={2}
-                fill="var(--color-primary)"
+                fill="var(--color-primary-soft)"
                 fillOpacity={0.1}
                 connectNulls={false}
-                dot={false}
-                activeDot={{ r: 5, fill: 'var(--color-primary)', stroke: 'var(--color-surface-2)', strokeWidth: 2 }}
+                dot={renderDot}
+                activeDot={{ r: 5, fill: 'var(--color-primary-soft)', stroke: 'var(--color-surface-2)', strokeWidth: 2 }}
                 isAnimationActive={false}
               />
             </AreaChart>

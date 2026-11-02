@@ -1,11 +1,17 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { EmptyState } from '@/components/EmptyState';
+import { Icon } from '@/components/Icon';
 import { Modal } from '@/components/Modal';
+import { PageHeader } from '@/components/PageHeader';
+import { SelectionBar } from '@/components/SelectionBar';
 import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
+import { formatLastChecked, isStale } from '@/features/products/formatLastChecked';
 import {
   useProducts,
   useRefreshPrice,
@@ -18,6 +24,16 @@ import { formatCurrency, formatDate, formatStore } from '@mv/utils';
 import styles from './Products.module.css';
 
 type ModalType = 'url' | 'search' | null;
+
+/** Domínio + caminho da URL, para a linha secundária (muted) sob o nome do produto. */
+function formatUrlPath(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.hostname}${u.pathname}`.replace(/\/$/, '');
+  } catch {
+    return url;
+  }
+}
 
 // ─── Inline name editor ───────────────────────────────────────────────────────
 
@@ -50,7 +66,7 @@ function NameCell({ product }: { product: Product }) {
 
   if (editing) {
     return (
-      <div className={styles.nameEditRow}>
+      <div className={[styles.nameCol, styles.nameEditRow].join(' ')}>
         <input
           ref={inputRef}
           className={styles.nameInput}
@@ -73,7 +89,7 @@ function NameCell({ product }: { product: Product }) {
   }
 
   return (
-    <div>
+    <div className={styles.nameCol}>
       <div className={styles.nameRow}>
         <span className={[styles.productName, hasGarbageName ? styles.noName : ''].join(' ')}>
           {product.name ?? <em>Sem nome</em>}
@@ -82,8 +98,8 @@ function NameCell({ product }: { product: Product }) {
           ✎
         </button>
       </div>
-      <a href={product.url} target="_blank" rel="noreferrer" className={styles.productUrl}>
-        {product.url}
+      <a href={product.url} target="_blank" rel="noreferrer" className={styles.productUrl} title={product.url}>
+        {formatUrlPath(product.url)}
       </a>
     </div>
   );
@@ -96,6 +112,24 @@ export function Products() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Abre o modal de URL quando chega de /products?adicionar=url (ex.: EmptyState do Dashboard).
+  // Lê o parâmetro uma única vez e o remove para não reabrir o modal em navegações futuras.
+  useEffect(() => {
+    if (searchParams.get('adicionar') === 'url') {
+      setModal('url');
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('adicionar');
+          return next;
+        },
+        { replace: true },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Per-product loading: tracks which product IDs are currently being refreshed
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
@@ -181,11 +215,20 @@ export function Products() {
   const columns: Column<Product>[] = [
     {
       key: 'select',
-      header: '',
+      header: (
+        <input
+          type="checkbox"
+          aria-label="Selecionar todos"
+          className={styles.checkbox}
+          checked={allSelected}
+          onChange={toggleSelectAll}
+        />
+      ),
       width: '36px',
       render: (r) => (
         <input
           type="checkbox"
+          aria-label={`Selecionar ${r.name ?? 'produto'}`}
           className={styles.checkbox}
           checked={selectedIds.has(r.id)}
           onChange={() => toggleSelect(r.id)}
@@ -193,15 +236,32 @@ export function Products() {
       ),
     },
     {
+      key: 'name',
+      header: 'Produto',
+      render: (r) => (
+        <div className={styles.productCell}>
+          {r.image_url ? (
+            <img
+              src={r.image_url}
+              alt=""
+              className={styles.thumb}
+              loading="lazy"
+              decoding="async"
+              width={44}
+              height={56}
+            />
+          ) : (
+            <div className={styles.thumbPlaceholder} />
+          )}
+          <NameCell product={r} />
+        </div>
+      ),
+    },
+    {
       key: 'store',
       header: 'Loja',
       width: '120px',
       render: (r) => <span className={styles.storeBadge}>{formatStore(r.store)}</span>,
-    },
-    {
-      key: 'name',
-      header: 'Produto',
-      render: (r) => <NameCell product={r} />,
     },
     {
       key: 'current_price',
@@ -217,10 +277,28 @@ export function Products() {
       ),
     },
     {
-      key: 'created_at',
-      header: 'Adicionado em',
-      width: '150px',
-      render: (r) => <span className={styles.date}>{r.created_at ? formatDate(r.created_at) : '—'}</span>,
+      key: 'last_checked',
+      header: 'Última verificação',
+      width: '160px',
+      render: (r) => {
+        if (!r.last_checked) {
+          return <span className={styles.dateNone}>Ainda não verificado</span>;
+        }
+        const stale = isStale(r.last_checked);
+        return (
+          <span
+            className={[styles.date, stale ? styles.dateStale : ''].join(' ')}
+            title={
+              stale
+                ? 'Sem verificação há mais de 12 h'
+                : `Adicionado em ${formatDate(r.created_at)}`
+            }
+          >
+            {stale && <Icon name="alert" size={12} />}
+            {formatLastChecked(r.last_checked)}
+          </span>
+        );
+      },
     },
     {
       key: 'actions',
@@ -231,7 +309,7 @@ export function Products() {
         return (
           <div className={styles.rowActions}>
             <Button
-              variant="ghost"
+              variant="secondary"
               size="sm"
               loading={isRefreshing}
               disabled={isRefreshing}
@@ -246,45 +324,44 @@ export function Products() {
     },
   ];
 
+  const total = data?.total ?? products.length;
+
   return (
     <div className={styles.page}>
-      <Card
-        title={`Produtos monitorados${data ? ` (${data.total})` : ''}`}
-        action={
-          <div className={styles.actions}>
+      <PageHeader
+        title="Produtos monitorados"
+        subtitle={`${total} anúncio${total === 1 ? '' : 's'} · Amazon e Mercado Livre`}
+        actions={
+          <>
             <Button variant="secondary" size="sm" onClick={() => setModal('search')}>
               Buscar por nome
             </Button>
             <Button size="sm" onClick={() => setModal('url')}>
               + Adicionar URL
             </Button>
-          </div>
+          </>
         }
-      >
-        {selectedIds.size > 0 && (
-          <div className={styles.toolbar}>
-            <span className={styles.toolbarInfo}>
-              {selectedIds.size} selecionado{selectedIds.size !== 1 ? 's' : ''}
-            </span>
-            <div className={styles.toolbarActions}>
-              <Button size="sm" variant="ghost" onClick={toggleSelectAll}>
-                {allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
-              </Button>
-              <Button size="sm" variant="danger" onClick={() => setConfirmDeleteOpen(true)}>
-                Excluir
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>
-                Cancelar
-              </Button>
-            </div>
-          </div>
-        )}
+      />
 
+      <Card>
         {isError ? (
           <div className={styles.errorState}>
             <p>Erro ao carregar produtos. Verifique se a API está rodando.</p>
             <Button variant="ghost" size="sm" onClick={() => refetch()}>Tentar novamente</Button>
           </div>
+        ) : !isLoading && products.length === 0 ? (
+          <EmptyState
+            title="Nenhum produto monitorado ainda"
+            description="Busque pelo nome ou cole o link de um anúncio da Amazon ou do Mercado Livre — a gente avisa quando o preço cair."
+            actions={
+              <>
+                <Button variant="secondary" onClick={() => setModal('search')}>
+                  Buscar por nome
+                </Button>
+                <Button onClick={() => setModal('url')}>+ Adicionar URL</Button>
+              </>
+            }
+          />
         ) : (
           <Table
             columns={columns}
@@ -292,6 +369,7 @@ export function Products() {
             keyExtractor={(p) => p.id}
             loading={isLoading}
             emptyMessage="Nenhum produto monitorado. Adicione uma URL ou busque por nome."
+            isRowSelected={(r) => selectedIds.has(r.id)}
           />
         )}
       </Card>
@@ -315,6 +393,13 @@ export function Products() {
         message={`Tem certeza que deseja excluir ${selectedIds.size} produto(s) selecionado(s) do monitoramento? Essa ação não pode ser desfeita.`}
         confirmLabel="Excluir"
       />
+
+      <SelectionBar count={selectedIds.size} onClear={() => setSelectedIds(new Set())}>
+        <Button variant="dangerOutline" size="sm" onClick={() => setConfirmDeleteOpen(true)}>
+          <Icon name="trash" size={14} />
+          Excluir
+        </Button>
+      </SelectionBar>
     </div>
   );
 }

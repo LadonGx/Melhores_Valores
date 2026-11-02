@@ -17,7 +17,15 @@ export function PromotionsModal({ isOpen, onClose, promotions }: Props) {
         {promotions.map((promo) => (
           <div key={promo.id} className={styles.row}>
             {promo.image_url ? (
-              <img src={promo.image_url} alt="" className={styles.thumb} loading="lazy" />
+              <img
+                src={promo.image_url}
+                alt=""
+                className={styles.thumb}
+                loading="lazy"
+                decoding="async"
+                width={40}
+                height={40}
+              />
             ) : (
               <div className={styles.thumbPlaceholder} />
             )}

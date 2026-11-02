@@ -1,0 +1,26 @@
+.dot {
+  display: inline-block;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+}
+
+.ok {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-tint);
+}
+
+.partial {
+  background: var(--color-warning);
+  box-shadow: 0 0 0 3px rgba(245, 184, 61, 0.16);
+}
+
+.blocked,
+.error {
+  background: var(--color-danger);
+  box-shadow: 0 0 0 3px var(--color-danger-tint);
+}
+
+.unknown {
+  background: var(--color-text-faint);
+}

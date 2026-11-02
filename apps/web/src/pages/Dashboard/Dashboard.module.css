@@ -18,10 +18,23 @@
 }
 
 .statValue {
-  font-size: 28px;
+  font-family: var(--font-display);
+  font-size: 30px;
   font-weight: 700;
   color: var(--color-text);
   line-height: 1;
+}
+
+.statEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-accent);
 }
 
 .statLabel {
@@ -47,70 +60,179 @@
   color: var(--color-primary);
 }
 
-/* ─── Grouping toolbar ───────────────────────────────── */
-.toolbar {
+/* ─── Destaques ──────────────────────────────────────── */
+.highlights {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.highlightsTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.highlightsGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .highlightsGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.highlightCard {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.highlightCard:hover {
+  background: var(--color-surface-2);
+}
+
+/* Mesma altura do HighlightCard (305px medidos) — evita CLS enquanto a lista carrega */
+.highlightSkeleton {
+  height: 305px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.highlightImageWrap {
+  height: 150px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 0 14px;
-  border-bottom: 1px solid var(--color-border);
-  flex-wrap: wrap;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-3);
+  margin-bottom: 12px;
 }
 
-.toolbarInfo {
+.highlightImage {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.highlightImagePlaceholder {
+  width: 100%;
+  height: 100%;
+}
+
+.highlightName {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 8px 0 6px;
   font-size: 13px;
-  color: var(--color-text-muted);
-  flex-shrink: 0;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--color-text);
+  min-height: 3em; /* sempre 2 linhas: preços alinhados entre os cards */
 }
 
-.toolbarActions {
+.highlightPrice {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Grouping toolbar ───────────────────────────────── */
+/* ─── Cabeçalho do painel: "Selecionar todos" + filtro ─────────── */
+.listActions {
   display: flex;
-  gap: 8px;
-  margin-left: auto;
+  align-items: center;
+  gap: 14px;
 }
 
+.selectAll {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.selectAll:hover {
+  color: var(--color-text);
+}
+
+/* ─── Nome do grupo (dentro da barra flutuante) ─────────────────── */
 .nameInputRow {
   display: flex;
   gap: 8px;
   align-items: center;
-  flex: 1;
 }
 
 .nameInput {
-  flex: 1;
-  min-width: 160px;
-  padding: 6px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+  width: 220px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
   color: var(--color-text);
   font-size: 13px;
   outline: none;
 }
 
 .nameInput:focus {
-  border-color: var(--color-primary);
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px var(--color-primary-tint);
 }
 
-/* ─── Product list ──────────────────────────────────── */
+/* ─── Product list (padrão "Seleção · Barra flutuante") ──────── */
 .productList {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  margin: -8px -10px;
 }
 
 .productRow {
-  margin: 0 -5px;
-  padding: 0 5px;
-  border-bottom: 1px solid var(--color-border);
-  transition: background 0.12s;
+  position: relative;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
-.productRow:last-child {
-  border-bottom: none;
+/* Separador entre linhas (some ao redor da linha selecionada) */
+.productRow + .productRow::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 10px;
+  right: 10px;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.rowSelected::before,
+.rowSelected + .productRow::before,
+.productRow:hover::before,
+.productRow:hover + .productRow::before {
+  opacity: 0;
 }
 
 .productRow:hover:not(.rowDisabled) {
-  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+  background: var(--color-surface-2);
 }
 
 .rowDisabled {
@@ -122,8 +244,10 @@
   cursor: pointer;
 }
 
-.rowSelected {
-  background: color-mix(in srgb, var(--color-primary) 8%, transparent) !important;
+.rowSelected,
+.rowSelected:hover:not(.rowDisabled) {
+  background: var(--color-selection-bg);
+  border-color: var(--color-selection-border);
 }
 
 .rowPaused {
@@ -134,7 +258,7 @@
   display: flex;
   align-items: center;
   gap: 15px;
-  padding: 12px 0;
+  padding: 14px 0;
   user-select: none;
 }
 
@@ -147,29 +271,29 @@
 }
 
 .productThumb {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 56px;
   object-fit: contain;
   border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+  background: var(--color-surface-3);
   flex-shrink: 0;
 }
 
 .productThumbPlaceholder {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 56px;
   border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+  background: var(--color-surface-3);
   flex-shrink: 0;
 }
 
 .storeBadge {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--color-primary);
-  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-  padding: 2px 8px;
-  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--color-badge-text);
+  background: var(--color-badge-bg);
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -203,7 +327,7 @@
 }
 
 .productName {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--color-text);
   overflow: hidden;
@@ -220,7 +344,19 @@
 }
 
 .lastChecked {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.lastCheckedStale {
+  color: var(--color-warning);
+}
+
+.lastCheckedNone {
+  font-size: 12px;
   color: var(--color-text-faint);
 }
 
@@ -232,8 +368,9 @@
 }
 
 .currentPrice {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text);
   white-space: nowrap;
 }
@@ -257,15 +394,16 @@
 .lowestBadge {
   font-size: 12px;
   font-weight: 700;
-  color: var(--color-success);
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-accent);
+  background: var(--color-accent-tint);
   padding: 3px 10px;
-  border-radius: 99px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
 
 .detailHint {
-  font-size: 11px;
-  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-primary-soft);
   white-space: nowrap;
 }
