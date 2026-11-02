@@ -23,6 +23,10 @@
   --color-primary-tint: rgba(98, 97, 234, 0.16); /* fundos de seleção */
   --color-nav-active: #222642;    /* item ativo da sidebar */
 
+  /* Seleção (linha marcada + barra flutuante) — padrão "Seleção · Barra flutuante" */
+  --color-selection-bg: #1f2147;
+  --color-selection-border: rgba(123, 124, 246, 0.55);
+
   /* Destaque "melhor valor" — o ponto verde do logo */
   --color-accent: #34d399;
   --color-accent-tint: rgba(52, 211, 153, 0.14);

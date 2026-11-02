@@ -6,7 +6,9 @@
   width: 100%;
   min-width: 860px; /* abaixo disso o wrapper rola na horizontal */
   table-layout: fixed; /* colunas com width fixa; a coluna sem width ocupa o resto */
-  border-collapse: collapse;
+  /* separate (e não collapse): só assim border-radius funciona nas células */
+  border-collapse: separate;
+  border-spacing: 0 2px;
   font-size: 13.5px;
 }
 
@@ -22,23 +24,51 @@
   white-space: nowrap;
 }
 
-.table tbody tr {
-  border-bottom: 1px solid var(--color-border);
-  transition: background var(--transition-fast);
-}
-
-.table tbody tr:last-child {
-  border-bottom: none;
-}
-
-.table tbody tr:hover {
-  background: var(--color-surface-2);
-}
-
 .table tbody td {
   padding: 14px 16px;
   color: var(--color-text);
   vertical-align: middle;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+/* Separador entre linhas */
+.table tbody tr + tr td {
+  border-top-color: var(--color-border);
+}
+
+/* Linha "solta" com cantos arredondados (hover e seleção) */
+.table tbody td:first-child {
+  border-left: 1px solid transparent;
+  border-top-left-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+}
+
+.table tbody td:last-child {
+  border-right: 1px solid transparent;
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+}
+
+.table tbody tr:hover td {
+  background: var(--color-surface-2);
+  border-top-color: transparent;
+}
+
+.table tbody tr:hover + tr td {
+  border-top-color: transparent;
+}
+
+/* Selecionada — padrão "Seleção · Barra flutuante" */
+.table tbody tr[data-selected='true'] td,
+.table tbody tr[data-selected='true']:hover td {
+  background: var(--color-selection-bg);
+  border-color: var(--color-selection-border);
+}
+
+.table tbody tr[data-selected='true'] + tr td {
+  border-top-color: transparent;
 }
 
 .empty {

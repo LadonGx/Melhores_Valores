@@ -129,7 +129,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  min-height: 68px;
+  min-height: 76px;
   padding: 10px 20px;
   border-bottom: 1px solid var(--color-border);
   transition: background var(--transition-fast);
@@ -154,13 +154,15 @@
   white-space: nowrap;
 }
 
+/* 44×56 + contain: nunca corta a imagem do produto (guia fase 2).
+   O fundo --color-surface-3 fica visível onde a imagem não cobre. */
 .thumb,
 .thumbPlaceholder {
-  width: 34px;
-  height: 46px;
+  width: 44px;
+  height: 56px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-3);
-  object-fit: cover;
+  object-fit: contain;
   flex-shrink: 0;
 }
 
@@ -214,4 +216,78 @@
 /* Botão "Monitorar" não estica no hover de linha */
 .row > button {
   flex-shrink: 0;
+}
+
+/* ── Esqueleto de carregamento ──────────────────────────────────────────────── */
+
+/* Mesmas classes de geometria do painel real (.panel/.row/.meta/.thumbPlaceholder).
+   Animação só de opacity (guia fase 2). */
+
+.skeletonBar {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+.skeletonHeaderBar {
+  width: 96px;
+  height: 14px;
+}
+
+.skeletonPill {
+  flex-shrink: 0;
+  width: 66px;
+  height: 23px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-2);
+}
+
+.skeletonLines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeletonLineWide {
+  width: 60%;
+  height: 12px;
+}
+
+.skeletonLineShort {
+  width: 35%;
+  height: 12px;
+}
+
+.skeletonPrice {
+  width: 92px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+.skeletonButton {
+  width: 110px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  flex-shrink: 0;
+}
+
+.skeletonPanel .row:hover {
+  background: transparent;
+}
+
+/* Só os elementos do esqueleto pulsam — o placeholder real (sem imagem) não. */
+.skeletonBar,
+.skeletonPill,
+.skeletonPrice,
+.skeletonButton,
+.skeletonPanel .thumbPlaceholder {
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% { opacity: 0.55; }
 }

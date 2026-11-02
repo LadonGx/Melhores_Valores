@@ -5,6 +5,8 @@ import { Card } from '@/components/Card';
 import { ConfirmModal } from '@/components/ConfirmModal';
 import { Icon } from '@/components/Icon';
 import { PageHeader } from '@/components/PageHeader';
+import { SelectionBar } from '@/components/SelectionBar';
+import { NextCheckCard } from '@/features/schedule/components/NextCheckCard';
 import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
@@ -27,7 +29,16 @@ function getGreeting(): string {
 
 // ─── Highlight card (Destaques) ────────────────────────────────────────────────
 
-function HighlightCard({ product, onOpen }: { product: Product; onOpen: () => void }) {
+function HighlightCard({
+  product,
+  onOpen,
+  priority = false,
+}: {
+  product: Product;
+  onOpen: () => void;
+  /** Imagem acima da dobra: sem lazy-load (melhora o LCP). */
+  priority?: boolean;
+}) {
   return (
     <Card
       className={styles.highlightCard}
@@ -47,7 +58,7 @@ function HighlightCard({ product, onOpen }: { product: Product; onOpen: () => vo
             src={product.image_url}
             alt=""
             className={styles.highlightImage}
-            loading="lazy"
+            loading={priority ? 'eager' : 'lazy'}
             decoding="async"
           />
         ) : (
@@ -431,6 +442,7 @@ export function Dashboard() {
             )}
           </div>
         </Card>
+        <NextCheckCard />
       </div>
 
       {/* ── Destaques ── */}
@@ -443,10 +455,11 @@ export function Dashboard() {
                 Array.from({ length: 4 }, (_, i) => (
                   <div key={i} className={styles.highlightSkeleton} aria-hidden="true" />
                 ))
-              : highlightProducts.map((p) => (
+              : highlightProducts.map((p, i) => (
                   <HighlightCard
                     key={p.id}
                     product={p}
+                    priority={i < 4}
                     onOpen={() => setModalTarget({ type: 'product', id: p.id })}
                   />
                 ))}
@@ -458,7 +471,19 @@ export function Dashboard() {
       <Card
         title="Produtos monitorados"
         action={
-          <FilterMenu
+          <div className={styles.listActions}>
+            {allRowIds.length > 0 && (
+              <label className={styles.selectAll}>
+                {allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
+                <input
+                  type="checkbox"
+                  className={styles.checkbox}
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                />
+              </label>
+            )}
+            <FilterMenu
             rows={allRows}
             sortOption={sortOption}
             hiddenIds={hiddenIds}
@@ -466,61 +491,10 @@ export function Dashboard() {
             onToggleHidden={toggleHidden}
             onShowAll={showAll}
             onReset={resetFilter}
-          />
+            />
+          </div>
         }
       >
-        {/* Selection toolbar */}
-        {selectedIds.size > 0 && (
-          <div className={styles.toolbar}>
-            <span className={styles.toolbarInfo}>
-              {selectedIds.size} selecionado{selectedIds.size !== 1 ? 's' : ''}
-            </span>
-
-            {showNameInput ? (
-              <div className={styles.nameInputRow}>
-                <input
-                  className={styles.nameInput}
-                  placeholder="Nome do grupo..."
-                  value={pendingGroupName}
-                  onChange={(e) => setPendingGroupName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGroup(); }}
-                  autoFocus
-                />
-                <Button
-                  size="sm"
-                  disabled={pendingGroupName.trim().length === 0}
-                  onClick={handleCreateGroup}
-                >
-                  Confirmar
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setShowNameInput(false)}>
-                  Voltar
-                </Button>
-              </div>
-            ) : (
-              <div className={styles.toolbarActions}>
-                <Button size="sm" variant="ghost" onClick={toggleSelectAll}>
-                  {allSelected ? 'Desmarcar todos' : 'Selecionar todos'}
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={selectedGroups.length > 0 || selectedProducts.length < 2}
-                  title={selectedGroups.length > 0 ? 'Desmarque os grupos para criar um novo grupo' : undefined}
-                  onClick={() => setShowNameInput(true)}
-                >
-                  Agrupar anúncios
-                </Button>
-                <Button size="sm" variant="danger" onClick={() => setConfirmDeleteOpen(true)}>
-                  Excluir
-                </Button>
-                <Button size="sm" variant="ghost" onClick={clearSelection}>
-                  Cancelar
-                </Button>
-              </div>
-            )}
-          </div>
-        )}
-
         {isLoading ? (
           <p className={styles.empty}>Carregando...</p>
         ) : products.length === 0 ? (
@@ -562,6 +536,56 @@ export function Dashboard() {
           </div>
         )}
       </Card>
+
+      {/* ── Ações em lote (barra flutuante) ── */}
+      <SelectionBar count={selectedIds.size} onClear={clearSelection}>
+        {showNameInput ? (
+          <div className={styles.nameInputRow}>
+            <input
+              className={styles.nameInput}
+              placeholder="Nome do grupo..."
+              aria-label="Nome do grupo"
+              value={pendingGroupName}
+              onChange={(e) => setPendingGroupName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreateGroup(); }}
+              autoFocus
+            />
+            <Button
+              size="sm"
+              disabled={pendingGroupName.trim().length === 0}
+              onClick={handleCreateGroup}
+            >
+              <Icon name="check" size={14} />
+              Confirmar
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowNameInput(false)}>
+              Voltar
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Button
+              size="sm"
+              disabled={selectedGroups.length > 0 || selectedProducts.length < 2}
+              title={
+                selectedGroups.length > 0
+                  ? 'Desmarque os grupos para criar um novo grupo'
+                  : selectedProducts.length < 2
+                    ? 'Selecione pelo menos 2 anúncios para agrupar'
+                    : undefined
+              }
+              onClick={() => setShowNameInput(true)}
+            >
+              <Icon name="layers" size={14} />
+              Agrupar
+            </Button>
+            <Button size="sm" variant="dangerOutline" onClick={() => setConfirmDeleteOpen(true)}>
+              <Icon name="trash" size={14} />
+              Excluir
+            </Button>
+          </>
+        )}
+      </SelectionBar>
 
       {/* ── Detail modal ── */}
       <ProductDetailModal

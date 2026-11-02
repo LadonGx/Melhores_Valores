@@ -94,9 +94,9 @@
   background: var(--color-surface-2);
 }
 
-/* Mesma altura do HighlightCard (251px medidos) — evita CLS enquanto a lista carrega */
+/* Mesma altura do HighlightCard (305px medidos) — evita CLS enquanto a lista carrega */
 .highlightSkeleton {
-  height: 251px;
+  height: 305px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
@@ -110,7 +110,7 @@
 }
 
 .highlightImageWrap {
-  height: 96px;
+  height: 150px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -152,69 +152,87 @@
 }
 
 /* ─── Grouping toolbar ───────────────────────────────── */
-.toolbar {
+/* ─── Cabeçalho do painel: "Selecionar todos" + filtro ─────────── */
+.listActions {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 0 14px;
-  border-bottom: 1px solid var(--color-border);
-  flex-wrap: wrap;
+  gap: 14px;
 }
 
-.toolbarInfo {
-  font-size: 13px;
+.selectAll {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
   color: var(--color-text-muted);
-  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
 }
 
-.toolbarActions {
-  display: flex;
-  gap: 8px;
-  margin-left: auto;
+.selectAll:hover {
+  color: var(--color-text);
 }
 
+/* ─── Nome do grupo (dentro da barra flutuante) ─────────────────── */
 .nameInputRow {
   display: flex;
   gap: 8px;
   align-items: center;
-  flex: 1;
 }
 
 .nameInput {
-  flex: 1;
-  min-width: 160px;
-  padding: 6px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+  width: 220px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
   color: var(--color-text);
   font-size: 13px;
   outline: none;
 }
 
 .nameInput:focus {
-  border-color: var(--color-primary);
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px var(--color-primary-tint);
 }
 
-/* ─── Product list ──────────────────────────────────── */
+/* ─── Product list (padrão "Seleção · Barra flutuante") ──────── */
 .productList {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  margin: -8px -10px;
 }
 
 .productRow {
-  margin: 0 -5px;
-  padding: 0 5px;
-  border-bottom: 1px solid var(--color-border);
-  transition: background 0.12s;
+  position: relative;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
-.productRow:last-child {
-  border-bottom: none;
+/* Separador entre linhas (some ao redor da linha selecionada) */
+.productRow + .productRow::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 10px;
+  right: 10px;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.rowSelected::before,
+.rowSelected + .productRow::before,
+.productRow:hover::before,
+.productRow:hover + .productRow::before {
+  opacity: 0;
 }
 
 .productRow:hover:not(.rowDisabled) {
-  background: color-mix(in srgb, var(--color-primary) 4%, transparent);
+  background: var(--color-surface-2);
 }
 
 .rowDisabled {
@@ -226,8 +244,10 @@
   cursor: pointer;
 }
 
-.rowSelected {
-  background: color-mix(in srgb, var(--color-primary) 8%, transparent) !important;
+.rowSelected,
+.rowSelected:hover:not(.rowDisabled) {
+  background: var(--color-selection-bg);
+  border-color: var(--color-selection-border);
 }
 
 .rowPaused {
@@ -251,17 +271,17 @@
 }
 
 .productThumb {
-  width: 34px;
-  height: 46px;
-  object-fit: cover;
+  width: 44px;
+  height: 56px;
+  object-fit: contain;
   border-radius: var(--radius-sm);
   background: var(--color-surface-3);
   flex-shrink: 0;
 }
 
 .productThumbPlaceholder {
-  width: 34px;
-  height: 46px;
+  width: 44px;
+  height: 56px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-3);
   flex-shrink: 0;

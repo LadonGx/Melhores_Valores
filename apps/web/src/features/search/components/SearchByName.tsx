@@ -43,6 +43,9 @@ type FormValues = z.infer<typeof schema>;
 // Tempo máximo aguardando o Celery processar (scrapers com Playwright podem ser lentos)
 const SEARCH_TIMEOUT_MS = 60_000;
 
+// Quantidade de linhas-esqueleto mostradas enquanto a busca não responde
+const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
+
 export function SearchByName() {
   const [searchId, setSearchId] = useState('');
   // isSearchActive permanece true desde o submit até resultados chegarem ou timeout
@@ -138,6 +141,31 @@ export function SearchByName() {
         </div>
       )}
 
+      {isWaiting && (
+        // Esqueleto com a mesma geometria do painel real — evita salto de layout
+        // quando os resultados chegam. Sem <button> (o teste exige um único botão
+        // durante o loading); tudo aria-hidden.
+        <div className={`${styles.panel} ${styles.skeletonPanel}`} aria-hidden="true">
+          <div className={styles.panelHeader}>
+            <span className={`${styles.skeletonBar} ${styles.skeletonHeaderBar}`} />
+          </div>
+          {SKELETON_ROWS.map((i) => (
+            <div key={i} className={styles.row}>
+              <span className={styles.skeletonPill} />
+              <div className={styles.thumbPlaceholder} />
+              <div className={styles.skeletonLines}>
+                <span className={`${styles.skeletonBar} ${styles.skeletonLineWide}`} />
+                <span className={`${styles.skeletonBar} ${styles.skeletonLineShort}`} />
+              </div>
+              <div className={styles.meta}>
+                <span className={styles.skeletonPrice} />
+              </div>
+              <span className={styles.skeletonButton} />
+            </div>
+          ))}
+        </div>
+      )}
+
       {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => (
         <div key={store} className={styles.warning}>
           <Icon name="alert" size={16} className={styles.warningIcon} />
@@ -169,8 +197,8 @@ export function SearchByName() {
                     src={r.image_url}
                     alt=""
                     className={styles.thumb}
-                    width={34}
-                    height={46}
+                    width={44}
+                    height={56}
                     loading="lazy"
                     decoding="async"
                   />

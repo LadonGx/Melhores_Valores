@@ -150,3 +150,10 @@ export type RefreshPriceResponse =
   | { status: 'ok'; price: number; in_stock: boolean; name: string | null; source: string }
   | { status: 'out_of_stock'; in_stock: false; detail: string }
   | { status: 'error'; reason: 'unavailable' | 'blocked' | 'scraping_failed' | 'exception'; detail: string };
+
+/** GET /schedule/next-check — próxima verificação automática (Celery Beat). */
+export interface NextCheckResponse {
+  /** ISO 8601 com fuso; null se não houver agendamento configurado. */
+  next_run: string | null;
+  interval_hours: number | null;
+}

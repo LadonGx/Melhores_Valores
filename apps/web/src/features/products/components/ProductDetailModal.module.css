@@ -18,7 +18,7 @@
   width: 56px;
   height: 56px;
   border-radius: var(--radius-md);
-  object-fit: cover;
+  object-fit: contain;
   background: var(--color-surface-3);
   flex-shrink: 0;
 }

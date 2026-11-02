@@ -3,7 +3,7 @@ import styles from './Table.module.css';
 
 export interface Column<T> {
   key: string;
-  header: string;
+  header: ReactNode;
   width?: string;
   render: (row: T) => ReactNode;
 }
@@ -14,6 +14,10 @@ interface TableProps<T> {
   keyExtractor: (row: T) => string;
   loading?: boolean;
   emptyMessage?: string;
+  /** Classe extra por linha. */
+  rowClassName?: (row: T) => string | undefined;
+  /** Linha selecionada: recebe o destaque arredondado do padrão "Seleção · Barra flutuante". */
+  isRowSelected?: (row: T) => boolean;
 }
 
 export function Table<T>({
@@ -22,6 +26,8 @@ export function Table<T>({
   keyExtractor,
   loading = false,
   emptyMessage = 'Nenhum dado encontrado.',
+  rowClassName,
+  isRowSelected,
 }: TableProps<T>) {
   return (
     <div className={styles.wrapper}>
@@ -50,7 +56,11 @@ export function Table<T>({
             </tr>
           ) : (
             data.map((row) => (
-              <tr key={keyExtractor(row)}>
+              <tr
+                key={keyExtractor(row)}
+                className={rowClassName?.(row)}
+                data-selected={isRowSelected?.(row) ? 'true' : undefined}
+              >
                 {columns.map((col) => (
                   <td key={col.key}>{col.render(row)}</td>
                 ))}

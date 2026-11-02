@@ -125,6 +125,32 @@ async def list_promotions():
     return {"total": len(promotions), "promotions": promotions}
 
 
+@app.get("/schedule/next-check")
+async def get_next_automatic_check():
+    """
+    Próxima verificação automática de preços (Celery Beat).
+    Lê o próprio crontab do beat_schedule — fonte única do agendamento, nada duplicado no front.
+    """
+    from datetime import timedelta
+
+    from .worker_tasks import app as celery_app
+
+    entry = celery_app.conf.beat_schedule.get("schedule-all-products-every-6-hours")
+    if not entry:
+        return {"next_run": None, "interval_hours": None}
+
+    schedule = entry["schedule"]
+    now = celery_app.now()
+    next_run = now + schedule.remaining_estimate(now)
+    # remaining_estimate devolve 23:59:59.999…; arredonda para o minuto cheio
+    next_run = (next_run + timedelta(seconds=30)).replace(second=0, microsecond=0)
+
+    hours = sorted(getattr(schedule, "hour", []) or [])
+    interval_hours = hours[1] - hours[0] if len(hours) > 1 else 24
+
+    return {"next_run": next_run.isoformat(), "interval_hours": interval_hours}
+
+
 @app.get("/products/group-stats")
 async def get_group_stats(ids: str):
     """
