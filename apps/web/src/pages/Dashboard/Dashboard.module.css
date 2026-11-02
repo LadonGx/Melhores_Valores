@@ -344,8 +344,20 @@
 }
 
 .lastChecked {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+.lastCheckedStale {
+  color: var(--color-warning);
+}
+
+.lastCheckedNone {
+  font-size: 12px;
+  color: var(--color-text-faint);
 }
 
 .productMeta {

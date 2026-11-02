@@ -2,13 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { Input } from '@/components/Input';
 import { Toast } from '@/components/Toast';
+import { StoreStatusDot } from '@/features/stores/components/StoreStatusDot';
+import { storesHealthKey, useStoresHealth } from '@/features/stores/hooks/useStoresHealth';
 import { useAddProduct } from '@/features/products/hooks/useProducts';
 import { useSearchResults, useStartSearch } from '@/features/search/hooks/useSearch';
 import { formatCurrency, formatStore } from '@mv/utils';
+import type { StoresHealthResponse } from '@mv/types';
 import styles from './SearchByName.module.css';
 
 const BLOCK_CATEGORY_LABELS: Record<string, string> = {
@@ -46,6 +50,21 @@ const SEARCH_TIMEOUT_MS = 60_000;
 // Quantidade de linhas-esqueleto mostradas enquanto a busca não responde
 const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 
+// Exemplos clicáveis do convite inicial — só preenchem o campo, não disparam a busca
+const INVITE_EXAMPLES = ['Kindle Paperwhite', 'Echo Dot', '20th Century Boys'];
+
+/** Frase do aviso de loja bloqueada sobre o canal monitor: a verificação de preço dos
+ *  anúncios dessa loja é afetada junto? Sem dados de saúde, devolve null (aviso fica como está). */
+function describeMonitorImpact(store: string, health?: StoresHealthResponse): string | null {
+  const entry = health?.stores.find((s) => s.store === store);
+  const monitorStatus = entry?.channels.monitor.status;
+  if (!monitorStatus || monitorStatus === 'unknown') return null;
+  if (monitorStatus === 'ok') {
+    return `Os anúncios do ${formatStore(store)} que você já monitora continuam sendo verificados normalmente.`;
+  }
+  return `Os anúncios do ${formatStore(store)} que você monitora também estão com falha na verificação de preço.`;
+}
+
 export function SearchByName() {
   const [searchId, setSearchId] = useState('');
   // isSearchActive permanece true desde o submit até resultados chegarem ou timeout
@@ -59,10 +78,13 @@ export function SearchByName() {
   const { mutate: startSearch, isPending: isStarting } = useStartSearch();
   const { data: results, isFetching } = useSearchResults(searchId);
   const { mutate: addProduct } = useAddProduct();
+  const queryClient = useQueryClient();
+  // Saúde das lojas (canal search/monitor). API lenta ou falha → simplesmente não exibe.
+  const { data: storesHealth } = useStoresHealth();
 
   const closeErrorToast = useCallback(() => setErrorToast(null), []);
 
-  const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
+  const { register, handleSubmit, setValue, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
   });
 
@@ -100,6 +122,19 @@ export function SearchByName() {
   // "nenhum resultado" só após busca terminar de verdade (timeout ou resultados vazios confirmados)
   const showEmpty = !isWaiting && !!searchId && results !== undefined && !hasResults;
 
+  // Quando uma busca termina (resultados ou vazio confirmado), refresca a saúde das lojas —
+  // a sidebar e a linha de status sob o formulário refletem novas falhas na hora.
+  const searchFinished = hasResults || showEmpty;
+  useEffect(() => {
+    if (searchFinished) {
+      void queryClient.invalidateQueries({ queryKey: storesHealthKey });
+    }
+  }, [searchFinished, queryClient]);
+
+  // Convite inicial: só antes da primeira busca (nisso os chips não quebram a regra
+  // dos testes de haver exatamente um botão durante o carregamento).
+  const showInvite = !isWaiting && !searchId && !hasResults;
+
   // Índice do primeiro resultado com preço — recebe o selo "Menor preço"
   const firstPricedIndex = hasResults ? results!.results.findIndex((r) => r.price != null) : -1;
 
@@ -134,6 +169,42 @@ export function SearchByName() {
         </Button>
       </form>
 
+      {/* Status das lojas (canal busca) — discreta; loading/erro de API → não mostra nada */}
+      {storesHealth && storesHealth.stores.length > 0 && (
+        <div className={styles.storeStatus}>
+          {storesHealth.stores.map((s) => (
+            <span key={s.store} className={styles.storeStatusItem}>
+              <StoreStatusDot status={s.channels.search.status} />
+              <span>
+                {s.label} · busca {s.channels.search.detail}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Convite inicial — some durante o carregamento e depois da primeira busca */}
+      {showInvite && (
+        <div className={styles.invite}>
+          <div className={styles.inviteText}>
+            <p className={styles.inviteTitle}>Comece pelo nome do produto</p>
+            <p className={styles.inviteHint}>Toque em um exemplo para preencher o campo:</p>
+          </div>
+          <div className={styles.inviteChips}>
+            {INVITE_EXAMPLES.map((example) => (
+              <button
+                key={example}
+                type="button"
+                className={styles.inviteChip}
+                onClick={() => setValue('query', example)}
+              >
+                {example}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {isWaiting && (
         <div className={styles.status}>
           <span className={styles.spinner} />
@@ -166,17 +237,31 @@ export function SearchByName() {
         </div>
       )}
 
-      {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => (
-        <div key={store} className={styles.warning}>
-          <Icon name="alert" size={16} className={styles.warningIcon} />
-          <span>
-            {formatStore(store)} está {describeStoreBlock(category)} — mostrando resultados de outras lojas.
-          </span>
-        </div>
-      ))}
+      {results?.store_warnings && Object.entries(results.store_warnings).map(([store, category]) => {
+        const impact = describeMonitorImpact(store, storesHealth);
+        return (
+          <div key={store} className={styles.warning}>
+            <Icon name="alert" size={16} className={styles.warningIcon} />
+            <div className={styles.warningContent}>
+              {/* Frase original preservada (testes dependem dela) + impacto no canal monitor */}
+              <strong>
+                {formatStore(store)} está {describeStoreBlock(category)} — mostrando resultados de
+                outras lojas.
+              </strong>
+              {impact && <span>{impact}</span>}
+            </div>
+          </div>
+        );
+      })}
 
       {showEmpty && (
-        <p className={styles.empty}>Nenhum resultado encontrado. Tente um termo diferente.</p>
+        <div className={styles.emptyBox}>
+          <p className={styles.empty}>Nenhum resultado encontrado. Tente um termo diferente.</p>
+          <p className={styles.emptyHint}>
+            Verifique o termo digitado e, se você preencheu a faixa de preço, tente de novo sem
+            mínimo/máximo.
+          </p>
+        </div>
       )}
 
       {hasResults && (

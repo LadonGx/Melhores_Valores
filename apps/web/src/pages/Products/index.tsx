@@ -1,7 +1,9 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { EmptyState } from '@/components/EmptyState';
 import { Icon } from '@/components/Icon';
 import { Modal } from '@/components/Modal';
 import { PageHeader } from '@/components/PageHeader';
@@ -9,6 +11,7 @@ import { SelectionBar } from '@/components/SelectionBar';
 import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
+import { formatLastChecked, isStale } from '@/features/products/formatLastChecked';
 import {
   useProducts,
   useRefreshPrice,
@@ -109,6 +112,24 @@ export function Products() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Abre o modal de URL quando chega de /products?adicionar=url (ex.: EmptyState do Dashboard).
+  // Lê o parâmetro uma única vez e o remove para não reabrir o modal em navegações futuras.
+  useEffect(() => {
+    if (searchParams.get('adicionar') === 'url') {
+      setModal('url');
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('adicionar');
+          return next;
+        },
+        { replace: true },
+      );
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Per-product loading: tracks which product IDs are currently being refreshed
   const [refreshingIds, setRefreshingIds] = useState<Set<string>>(new Set());
@@ -256,10 +277,28 @@ export function Products() {
       ),
     },
     {
-      key: 'created_at',
-      header: 'Adicionado em',
-      width: '150px',
-      render: (r) => <span className={styles.date}>{r.created_at ? formatDate(r.created_at) : '—'}</span>,
+      key: 'last_checked',
+      header: 'Última verificação',
+      width: '160px',
+      render: (r) => {
+        if (!r.last_checked) {
+          return <span className={styles.dateNone}>Ainda não verificado</span>;
+        }
+        const stale = isStale(r.last_checked);
+        return (
+          <span
+            className={[styles.date, stale ? styles.dateStale : ''].join(' ')}
+            title={
+              stale
+                ? 'Sem verificação há mais de 12 h'
+                : `Adicionado em ${formatDate(r.created_at)}`
+            }
+          >
+            {stale && <Icon name="alert" size={12} />}
+            {formatLastChecked(r.last_checked)}
+          </span>
+        );
+      },
     },
     {
       key: 'actions',
@@ -310,6 +349,19 @@ export function Products() {
             <p>Erro ao carregar produtos. Verifique se a API está rodando.</p>
             <Button variant="ghost" size="sm" onClick={() => refetch()}>Tentar novamente</Button>
           </div>
+        ) : !isLoading && products.length === 0 ? (
+          <EmptyState
+            title="Nenhum produto monitorado ainda"
+            description="Busque pelo nome ou cole o link de um anúncio da Amazon ou do Mercado Livre — a gente avisa quando o preço cair."
+            actions={
+              <>
+                <Button variant="secondary" onClick={() => setModal('search')}>
+                  Buscar por nome
+                </Button>
+                <Button onClick={() => setModal('url')}>+ Adicionar URL</Button>
+              </>
+            }
+          />
         ) : (
           <Table
             columns={columns}

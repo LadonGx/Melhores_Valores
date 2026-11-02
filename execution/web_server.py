@@ -125,6 +125,17 @@ async def list_promotions():
     return {"total": len(promotions), "promotions": promotions}
 
 
+@app.get("/stores/health")
+async def stores_health():
+    """
+    Saúde de cada loja por canal (busca / monitoramento de preço): último sucesso,
+    última falha e o motivo (ex.: Mercado Livre exigindo login na busca).
+    """
+    from .store_health import get_stores_health
+
+    return {"stores": get_stores_health()}
+
+
 @app.get("/schedule/next-check")
 async def get_next_automatic_check():
     """

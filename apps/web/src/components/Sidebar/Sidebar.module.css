@@ -110,17 +110,7 @@
   display: none;
 }
 
-/* ── Rodapé ────────────────────────────── */
+/* ── Rodapé: saúde das lojas ───────────── */
 .footer {
-  padding: 16px 20px 20px;
-}
-
-.stores {
-  font-size: 11px;
-  color: var(--color-text-faint);
-  white-space: nowrap;
-}
-
-.collapsed .footer {
-  display: none;
+  padding: 12px 0 16px;
 }

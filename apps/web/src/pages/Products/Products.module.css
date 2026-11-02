@@ -75,8 +75,20 @@
 }
 
 .date {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--color-text-muted);
+}
+
+.dateStale {
+  color: var(--color-warning);
+}
+
+.dateNone {
+  font-size: 12px;
+  color: var(--color-text-faint);
 }
 
 .errorState {

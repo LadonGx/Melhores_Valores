@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { Icon, type IconName } from '@/components/Icon';
 import { Logo } from '@/components/Logo';
+import { StoreHealthPanel } from '@/features/stores/components/StoreHealthPanel';
 import { useAppStore } from '@/store/app.store';
 import styles from './Sidebar.module.css';
 
@@ -49,7 +50,7 @@ export function Sidebar() {
       </nav>
 
       <div className={styles.footer}>
-        <span className={styles.stores}>Amazon · Mercado Livre</span>
+        <StoreHealthPanel compact={collapsed} />
       </div>
     </aside>
   );

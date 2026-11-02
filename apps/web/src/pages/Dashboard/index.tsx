@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { ConfirmModal } from '@/components/ConfirmModal';
+import { EmptyState } from '@/components/EmptyState';
 import { Icon } from '@/components/Icon';
 import { PageHeader } from '@/components/PageHeader';
 import { SelectionBar } from '@/components/SelectionBar';
 import { NextCheckCard } from '@/features/schedule/components/NextCheckCard';
 import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
+import { formatLastChecked, isStale } from '@/features/products/formatLastChecked';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
 import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
@@ -99,6 +101,12 @@ function GroupRow({
   const cheapest = sorted.find((p) => p.current_price != null);
   const thumb = groupProducts.find((p) => p.image_url)?.image_url;
   const affected = groupProducts.filter((p) => p.in_stock === false);
+  const latestChecked = groupProducts.reduce<string | null>((latest, p) => {
+    if (!p.last_checked) return latest;
+    if (!latest || new Date(p.last_checked) > new Date(latest)) return p.last_checked;
+    return latest;
+  }, null);
+  const groupStale = latestChecked != null && isStale(latestChecked);
 
   return (
     <div
@@ -149,6 +157,15 @@ function GroupRow({
               </span>
             ))}
             <span className={styles.listingCount}>{groupProducts.length} anúncios</span>
+            {latestChecked && (
+              <span
+                className={[styles.lastChecked, groupStale ? styles.lastCheckedStale : ''].join(' ')}
+                title={groupStale ? 'Sem verificação há mais de 12 h' : formatDate(latestChecked)}
+              >
+                {groupStale && <Icon name="alert" size={12} />}
+                · Verificado {formatLastChecked(latestChecked)}
+              </span>
+            )}
           </div>
         </div>
 
@@ -227,10 +244,25 @@ function ProductRow({
               </Tooltip>
             )}
           </div>
-          {product.last_checked && (
-            <span className={styles.lastChecked}>
-              Verificado em {formatDate(product.last_checked)}
+          {product.last_checked ? (
+            <span
+              className={[
+                styles.lastChecked,
+                isStale(product.last_checked) ? styles.lastCheckedStale : '',
+              ].join(' ')}
+              title={
+                isStale(product.last_checked)
+                  ? 'Sem verificação há mais de 12 h'
+                  : formatDate(product.last_checked)
+              }
+            >
+              {isStale(product.last_checked) && <Icon name="alert" size={12} />}
+              Verificado {formatLastChecked(product.last_checked)}
               {isPaused ? ' · Pausado' : ''}
+            </span>
+          ) : (
+            <span className={styles.lastCheckedNone}>
+              Ainda não verificado{isPaused ? ' · Pausado' : ''}
             </span>
           )}
         </div>
@@ -498,12 +530,30 @@ export function Dashboard() {
         {isLoading ? (
           <p className={styles.empty}>Carregando...</p>
         ) : products.length === 0 ? (
-          <p className={styles.empty}>
-            Nenhum produto monitorado.{' '}
-            <a href="/products">Adicione seu primeiro produto.</a>
-          </p>
+          <EmptyState
+            title="Nenhum produto monitorado ainda"
+            description="Busque pelo nome ou cole o link de um anúncio da Amazon ou do Mercado Livre — a gente avisa quando o preço cair."
+            actions={
+              <>
+                <Button variant="primary" onClick={() => navigate('/search')}>
+                  Buscar produto
+                </Button>
+                <Button variant="secondary" onClick={() => navigate('/products?adicionar=url')}>
+                  Adicionar por URL
+                </Button>
+              </>
+            }
+          />
         ) : visibleRows.length === 0 ? (
-          <p className={styles.empty}>Nenhum produto corresponde ao filtro atual.</p>
+          <EmptyState
+            icon={null}
+            title="Nenhum produto corresponde ao filtro atual"
+            actions={
+              <Button variant="secondary" size="sm" onClick={showAll}>
+                Mostrar todos
+              </Button>
+            }
+          />
         ) : (
           <div className={styles.productList}>
             {visibleRows.map((row) => {
