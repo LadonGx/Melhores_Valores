@@ -10,15 +10,16 @@ generator client {
 }
 
 model Product {
-  id        String         @id @default(uuid())
-  url       String         @unique
+  id        String             @id @default(uuid())
+  url       String             @unique
   name      String?
   imageUrl  String?
   store     String
-  status    String         @default("active")
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  status    String             @default("active")
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
   history   PriceHistory[]
+  groups    ProductGroupItem[]
 }
 
 model PriceHistory {
@@ -48,4 +49,23 @@ model SearchResult {
 
   @@index([search_id])
   @@index([query, store])
+}
+
+// Grupos de anúncios do mesmo produto em lojas diferentes (antes ficavam no
+// localStorage do navegador e não apareciam em outro aparelho/endereço).
+model ProductGroup {
+  id        String             @id @default(uuid())
+  name      String
+  createdAt DateTime           @default(now())
+  items     ProductGroupItem[]
+}
+
+model ProductGroupItem {
+  groupId   String
+  productId String
+  group     ProductGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, productId])
+  @@index([productId])
 }

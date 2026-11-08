@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .db_client import (
-    add_price_history, delete_product, get_all_products, get_or_create_product,
+    add_price_history, create_group, delete_group, delete_product, list_groups,
+    remove_product_from_group, get_all_products, get_or_create_product,
     get_group_price_stats, get_latest_price_entry, get_price_history_chart,
     get_price_history_page, get_price_stats,
     get_product_by_id, get_products_with_history,
@@ -183,6 +184,44 @@ async def remove_product(product_id: str):
     if not removed:
         raise HTTPException(status_code=404, detail="Produto não encontrado.")
     return {"status": "ok", "deleted_id": product_id}
+
+
+class CreateGroupRequest(BaseModel):
+    name: str
+    product_ids: list[str]
+
+
+@app.get("/groups")
+async def get_groups():
+    """Grupos de anúncios (mesmo produto em lojas diferentes)."""
+    return {"groups": list_groups()}
+
+
+@app.post("/groups", status_code=201)
+async def post_group(req: CreateGroupRequest):
+    """Cria um grupo com pelo menos 2 anúncios monitorados."""
+    try:
+        return create_group(req.name, req.product_ids)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.delete("/groups/{group_id}")
+async def remove_group(group_id: str):
+    """Desfaz o grupo; os anúncios continuam sendo monitorados."""
+    if not delete_group(group_id):
+        raise HTTPException(status_code=404, detail="Grupo não encontrado.")
+    return {"status": "ok", "deleted_id": group_id}
+
+
+@app.delete("/groups/{group_id}/products/{product_id}")
+async def remove_group_product(group_id: str, product_id: str):
+    """Tira um anúncio do grupo. Se sobrar só 1, o grupo é desfeito (group = null)."""
+    try:
+        group = remove_product_from_group(group_id, product_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"status": "ok", "group": group}
 
 
 @app.post("/product/{product_id}/refresh")

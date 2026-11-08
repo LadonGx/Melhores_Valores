@@ -337,10 +337,100 @@ def delete_product(product_id: str) -> bool:
         db.pricehistory.delete_many(where={"productId": product_id})
         deleted = db.product.delete(where={"id": product_id})
         logger.info(f"Produto {product_id} removido com sucesso.")
+        # Os itens de grupo saem em cascata; grupos que ficaram com < 2 anúncios somem
+        _prune_small_groups()
         return deleted is not None
     except Exception as e:
         logger.error(f"Erro ao deletar produto {product_id}: {e}")
         return False
+
+
+# ─────────────────────────────────────────────
+# ProductGroup — anúncios do mesmo produto em lojas diferentes
+# ─────────────────────────────────────────────
+
+MIN_GROUP_SIZE = 2
+
+
+def _serialize_group(group) -> dict:
+    return {
+        "id": group.id,
+        "name": group.name,
+        "productIds": [item.productId for item in (group.items or [])],
+        "createdAt": group.createdAt.isoformat(),
+    }
+
+
+def _prune_small_groups() -> int:
+    """Remove grupos com menos de MIN_GROUP_SIZE anúncios. Retorna quantos removeu."""
+    groups = db.productgroup.find_many(include={"items": True})
+    small = [g.id for g in groups if len(g.items or []) < MIN_GROUP_SIZE]
+    if small:
+        db.productgroup.delete_many(where={"id": {"in": small}})
+    return len(small)
+
+
+def list_groups() -> list[dict]:
+    connect_db()
+    groups = db.productgroup.find_many(include={"items": True}, order={"createdAt": "asc"})
+    return [_serialize_group(g) for g in groups]
+
+
+def create_group(name: str, product_ids: list[str]) -> dict:
+    """
+    Cria um grupo com os anúncios informados (ids repetidos ou inexistentes são ignorados).
+
+    Raises:
+        ValueError: nome vazio ou menos de MIN_GROUP_SIZE anúncios válidos.
+    """
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("O nome do grupo é obrigatório.")
+    unique_ids = list(dict.fromkeys(product_ids))
+    connect_db()
+    existing = {p.id for p in db.product.find_many(where={"id": {"in": unique_ids}})}
+    valid_ids = [pid for pid in unique_ids if pid in existing]
+    if len(valid_ids) < MIN_GROUP_SIZE:
+        raise ValueError(f"Um grupo precisa de pelo menos {MIN_GROUP_SIZE} anúncios monitorados.")
+    group = db.productgroup.create(
+        data={
+            "name": name,
+            "items": {"create": [{"product": {"connect": {"id": pid}}} for pid in valid_ids]},
+        },
+        include={"items": True},
+    )
+    return _serialize_group(group)
+
+
+def delete_group(group_id: str) -> bool:
+    """Desfaz o grupo (os anúncios continuam monitorados). False se não existir."""
+    connect_db()
+    if db.productgroup.find_unique(where={"id": group_id}) is None:
+        return False
+    db.productgroup.delete(where={"id": group_id})
+    return True
+
+
+def remove_product_from_group(group_id: str, product_id: str) -> dict | None:
+    """
+    Tira um anúncio do grupo. Se o grupo ficar com menos de MIN_GROUP_SIZE anúncios,
+    ele é desfeito e o retorno é None; senão, retorna o grupo atualizado.
+
+    Raises:
+        LookupError: o grupo ou o anúncio no grupo não existe.
+    """
+    connect_db()
+    key = {"groupId_productId": {"groupId": group_id, "productId": product_id}}
+    if db.productgroupitem.find_unique(where=key) is None:
+        raise LookupError("Anúncio não encontrado nesse grupo.")
+    db.productgroupitem.delete(where=key)
+    group = db.productgroup.find_unique(where={"id": group_id}, include={"items": True})
+    if group is None:
+        return None
+    if len(group.items or []) < MIN_GROUP_SIZE:
+        db.productgroup.delete(where={"id": group_id})
+        return None
+    return _serialize_group(group)
 
 
 # ─────────────────────────────────────────────
