@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .db_client import (
+    ProductAlreadyGroupedError,
     add_price_history, create_group, delete_group, delete_product, list_groups,
     remove_product_from_group, get_all_products, get_or_create_product,
     get_group_price_stats, get_latest_price_entry, get_price_history_chart,
@@ -202,6 +203,8 @@ async def post_group(req: CreateGroupRequest):
     """Cria um grupo com pelo menos 2 anúncios monitorados."""
     try:
         return create_group(req.name, req.product_ids)
+    except ProductAlreadyGroupedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

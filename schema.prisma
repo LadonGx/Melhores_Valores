@@ -62,10 +62,9 @@ model ProductGroup {
 
 model ProductGroupItem {
   groupId   String
-  productId String
+  productId String       @unique
   group     ProductGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
   product   Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@id([groupId, productId])
-  @@index([productId])
 }

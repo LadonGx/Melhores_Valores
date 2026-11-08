@@ -17,6 +17,10 @@ sys.modules["playwright.sync_api"] = playwright_stub
 prisma_stub = MagicMock()
 sys.modules["prisma"] = prisma_stub
 sys.modules["prisma.models"] = prisma_stub
+# prisma.errors precisa de classes de exceção de verdade (usadas em "except")
+prisma_errors_stub = MagicMock()
+prisma_errors_stub.UniqueViolationError = type("UniqueViolationError", (Exception,), {})
+sys.modules["prisma.errors"] = prisma_errors_stub
 
 # Stub celery and redis (not needed for unit tests)
 celery_stub = MagicMock()
