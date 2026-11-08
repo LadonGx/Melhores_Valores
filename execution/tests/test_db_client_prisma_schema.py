@@ -56,6 +56,12 @@ class TestGeneratedClientMatchesSchema:
         assert hasattr(client, "product")
         assert hasattr(client, "pricehistory")
 
+    def test_client_exposes_product_group_actions(self, real_prisma):
+        """Grupos de anúncios ficam no banco (ProductGroup/ProductGroupItem)."""
+        client = real_prisma.Prisma()
+        assert hasattr(client, "productgroup")
+        assert hasattr(client, "productgroupitem")
+
     def test_search_result_model_is_generated(self, real_prisma):
         assert hasattr(real_prisma.models, "SearchResult"), (
             "Prisma models module is missing 'SearchResult'. "
