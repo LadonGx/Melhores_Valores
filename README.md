@@ -141,6 +141,19 @@ O frontend fica em `apps/web` (pacote `@mv/web`) e depende dos pacotes compartil
 
 ---
 
+### Imagens Docker prontas
+
+A cada push na `main`, o GitHub Actions publica duas imagens no GitHub Container Registry:
+
+| Imagem | Conteúdo |
+|---|---|
+| `ghcr.io/ladongx/melhores-valores-api` | Backend Python: API (`uvicorn`), worker e beat do Celery (mesma imagem, muda o comando) |
+| `ghcr.io/ladongx/melhores-valores-web` | Front buildado servido pelo nginx, com `/api` repassado para a API |
+
+O endereço da API dentro do container do front é configurável por `API_UPSTREAM` (padrão `http://api:8000`), e a porta do nginx por `NGINX_PORT` (padrão `80`).
+
+---
+
 ## 🔐 Variáveis de Ambiente
 
 ### Backend (`.env` na raiz)

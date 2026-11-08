@@ -1,0 +1,27 @@
+# Template do nginx oficial: ${API_UPSTREAM} e ${NGINX_PORT} são preenchidos ao iniciar o container.
+server {
+    listen ${NGINX_PORT};
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    # /api/... -> FastAPI (a barra final remove o prefixo /api)
+    location /api/ {
+        proxy_pass ${API_UPSTREAM}/;
+        proxy_set_header Host $host;
+        proxy_read_timeout 120s;
+    }
+
+    # Arquivos com hash no nome podem ficar em cache por muito tempo
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # SPA: qualquer rota do React cai no index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
