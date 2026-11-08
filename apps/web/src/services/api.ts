@@ -12,6 +12,7 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     const message = error.response?.data?.detail ?? error.message;
-    return Promise.reject(new Error(message));
+    // Mantém o status HTTP (undefined = sem resposta, ex.: rede fora) para quem precisar distinguir
+    return Promise.reject(Object.assign(new Error(message), { status: error.response?.status }));
   }
 );

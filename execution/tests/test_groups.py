@@ -39,6 +39,7 @@ def fake_db(monkeypatch):
 class TestCreateGroup:
     def test_ignores_duplicated_and_unknown_ids(self, fake_db):
         fake_db.product.find_many.return_value = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
+        fake_db.productgroupitem.find_many.return_value = []
         fake_db.productgroup.create.return_value = _group()
 
         result = db_client.create_group("  Box Agatha  ", ["p1", "p2", "p1", "nao-existe"])
@@ -104,3 +105,38 @@ class TestPruneSmallGroups:
         fake_db.productgroup.find_many.return_value = [_group("g1", product_ids=("p2",))]
         assert db_client.delete_product("p1") is True
         fake_db.productgroup.delete_many.assert_called_once_with(where={"id": {"in": ["g1"]}})
+
+
+class TestOneGroupPerProduct:
+    def test_rejects_products_already_in_another_group(self, fake_db):
+        fake_db.product.find_many.return_value = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
+        fake_db.productgroupitem.find_many.return_value = [_item("p2")]
+
+        with pytest.raises(db_client.ProductAlreadyGroupedError):
+            db_client.create_group("Grupo", ["p1", "p2"])
+        fake_db.productgroup.create.assert_not_called()
+
+    def test_race_on_unique_index_becomes_already_grouped(self, fake_db):
+        fake_db.product.find_many.return_value = [SimpleNamespace(id="p1"), SimpleNamespace(id="p2")]
+        fake_db.productgroupitem.find_many.return_value = []
+        fake_db.productgroup.create.side_effect = db_client.UniqueViolationError("unique")
+
+        with pytest.raises(db_client.ProductAlreadyGroupedError):
+            db_client.create_group("Grupo", ["p1", "p2"])
+
+
+class TestGroupRoutes:
+    def test_post_group_returns_409_when_product_already_grouped(self, monkeypatch):
+        import asyncio
+        from fastapi import HTTPException
+        from execution import web_server
+
+        def fake_create(name, product_ids):
+            raise db_client.ProductAlreadyGroupedError("já agrupado")
+
+        monkeypatch.setattr(web_server, "create_group", fake_create)
+        req = web_server.CreateGroupRequest(name="G", product_ids=["p1", "p2"])
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(web_server.post_group(req))
+        assert exc.value.status_code == 409
+        assert exc.value.detail == "já agrupado"

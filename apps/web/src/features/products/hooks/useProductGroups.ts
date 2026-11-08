@@ -20,9 +20,20 @@ function readLegacyGroups(): ProductGroup[] {
 }
 
 /**
+ * O servidor recusou o grupo de vez (4xx: anúncios que não existem mais, anúncio já
+ * em outro grupo...). Sem resposta ou 5xx é falha passageira: vale tentar de novo.
+ */
+function isPermanentRejection(error: unknown): boolean {
+  const status = (error as { status?: number } | null)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
+/**
  * Envia para o servidor os grupos que ainda estão no localStorage (versões antigas
- * salvavam só no navegador) e limpa a chave. Grupos com o mesmo nome e os mesmos
- * anúncios de um que já existe no servidor não são duplicados.
+ * salvavam só no navegador). Grupos com o mesmo nome e os mesmos anúncios de um que
+ * já existe no servidor não são duplicados. Os que falharem por erro passageiro
+ * continuam no localStorage para a próxima tentativa; a chave só é apagada quando
+ * todos foram migrados ou descartados de propósito.
  */
 export async function migrateLegacyGroups(serverGroups: ProductGroup[]): Promise<boolean> {
   const legacy = readLegacyGroups().filter((g) => g.name?.trim() && g.productIds?.length >= 2);
@@ -32,18 +43,20 @@ export async function migrateLegacyGroups(serverGroups: ProductGroup[]): Promise
     `${g.name.trim()}|${[...g.productIds].sort().join(',')}`;
   const existing = new Set(serverGroups.map(signature));
 
+  const retry: ProductGroup[] = [];
   for (const group of legacy) {
     if (existing.has(signature(group))) continue;
     try {
       await groupsService.create(group.name.trim(), group.productIds);
-    } catch {
-      // Anúncios do grupo que não existem mais no servidor: o grupo é descartado
+    } catch (error) {
+      if (!isPermanentRejection(error)) retry.push(group);
     }
   }
   try {
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    if (retry.length > 0) localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(retry));
+    else localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
-    // localStorage indisponível: nada a limpar
+    // localStorage indisponível: nada a salvar ou limpar
   }
   return true;
 }

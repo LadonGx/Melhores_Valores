@@ -182,7 +182,7 @@ VITE_API_URL=http://localhost:8000
 | `POST` | `/search` | Dispara uma busca multi-loja (Amazon + Mercado Livre) e retorna um `search_id` |
 | `GET` | `/search/{search_id}` | Retorna os resultados da busca, ordenados por menor preço |
 | `GET` | `/groups` | Lista os grupos de anúncios (mesmo produto em lojas diferentes) |
-| `POST` | `/groups` | Cria um grupo `{name, product_ids}` com pelo menos 2 anúncios |
+| `POST` | `/groups` | Cria um grupo `{name, product_ids}` com pelo menos 2 anúncios; `409` se algum já estiver em outro grupo |
 | `DELETE` | `/groups/{group_id}` | Desfaz o grupo (os anúncios continuam monitorados) |
 | `DELETE` | `/groups/{group_id}/products/{product_id}` | Tira um anúncio do grupo; com menos de 2, o grupo é desfeito |
 
@@ -219,7 +219,7 @@ GET /search/{search_id} → retorna resultados ordenados por preço ASC
 - **Product**: informações básicas do produto (nome, loja, URL, imagem).
 - **PriceHistory**: cada variação de preço capturada, com timestamp.
 - **SearchResult**: cache temporário de buscas realizadas pelos usuários.
-- **ProductGroup** / **ProductGroupItem**: grupos de anúncios do mesmo produto em lojas diferentes. Ficam no banco (antes ficavam no `localStorage` do navegador; o front migra os grupos antigos sozinho na primeira abertura).
+- **ProductGroup** / **ProductGroupItem**: grupos de anúncios do mesmo produto em lojas diferentes; cada anúncio fica em no máximo um grupo. Ficam no banco (antes ficavam no `localStorage` do navegador; o front migra os grupos antigos sozinho na primeira abertura).
 
 ---
 

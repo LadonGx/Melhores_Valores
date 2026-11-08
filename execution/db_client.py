@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from prisma import Prisma
+from prisma.errors import UniqueViolationError
 from prisma.models import Product, PriceHistory
 
 _BRT = ZoneInfo("America/Sao_Paulo")
@@ -352,6 +353,13 @@ def delete_product(product_id: str) -> bool:
 MIN_GROUP_SIZE = 2
 
 
+_ALREADY_GROUPED_MSG = "Algum desses anúncios já está em outro grupo. Atualize a página e tente de novo."
+
+
+class ProductAlreadyGroupedError(Exception):
+    """Algum dos anúncios já está em outro grupo (cada anúncio fica em no máximo um)."""
+
+
 def _serialize_group(group) -> dict:
     return {
         "id": group.id,
@@ -382,6 +390,7 @@ def create_group(name: str, product_ids: list[str]) -> dict:
 
     Raises:
         ValueError: nome vazio ou menos de MIN_GROUP_SIZE anúncios válidos.
+        ProductAlreadyGroupedError: algum anúncio já pertence a outro grupo.
     """
     name = (name or "").strip()
     if not name:
@@ -392,13 +401,19 @@ def create_group(name: str, product_ids: list[str]) -> dict:
     valid_ids = [pid for pid in unique_ids if pid in existing]
     if len(valid_ids) < MIN_GROUP_SIZE:
         raise ValueError(f"Um grupo precisa de pelo menos {MIN_GROUP_SIZE} anúncios monitorados.")
-    group = db.productgroup.create(
-        data={
-            "name": name,
-            "items": {"create": [{"product": {"connect": {"id": pid}}} for pid in valid_ids]},
-        },
-        include={"items": True},
-    )
+    if db.productgroupitem.find_many(where={"productId": {"in": valid_ids}}):
+        raise ProductAlreadyGroupedError(_ALREADY_GROUPED_MSG)
+    try:
+        group = db.productgroup.create(
+            data={
+                "name": name,
+                "items": {"create": [{"product": {"connect": {"id": pid}}} for pid in valid_ids]},
+            },
+            include={"items": True},
+        )
+    except UniqueViolationError as e:
+        # Outra requisição agrupou o mesmo anúncio entre a checagem e o create
+        raise ProductAlreadyGroupedError(_ALREADY_GROUPED_MSG) from e
     return _serialize_group(group)
 
 

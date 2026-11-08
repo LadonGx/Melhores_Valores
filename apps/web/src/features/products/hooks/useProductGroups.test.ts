@@ -9,6 +9,8 @@ vi.mock('@/services/groups', () => ({
 
 const KEY = 'mv_product_groups';
 
+const httpError = (status: number | undefined) => Object.assign(new Error('falhou'), { status });
+
 const group = (name: string, productIds: string[]): ProductGroup => ({
   id: `local-${name}`,
   name,
@@ -43,16 +45,29 @@ describe('migrateLegacyGroups', () => {
     expect(groupsService.create).not.toHaveBeenCalled();
   });
 
-  it('ignora grupos inválidos e segue quando o servidor recusa um grupo', async () => {
+  it('ignora grupos inválidos e descarta os que o servidor recusa (4xx)', async () => {
     localStorage.setItem(
       KEY,
       JSON.stringify([group('Só um', ['p1']), group('Recusado', ['x1', 'x2']), group('Ok', ['p1', 'p2'])]),
     );
-    vi.mocked(groupsService.create).mockRejectedValueOnce(new Error('422'));
+    vi.mocked(groupsService.create).mockRejectedValueOnce(httpError(422));
 
     await migrateLegacyGroups([]);
     expect(groupsService.create).toHaveBeenCalledTimes(2);
     expect(groupsService.create).toHaveBeenLastCalledWith('Ok', ['p1', 'p2']);
     expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('mantém no localStorage os grupos que falharam por erro passageiro (rede/5xx)', async () => {
+    const offline = group('Sem rede', ['p1', 'p2']);
+    const serverDown = group('Erro 500', ['p3', 'p4']);
+    localStorage.setItem(KEY, JSON.stringify([offline, serverDown, group('Ok', ['p5', 'p6'])]));
+    vi.mocked(groupsService.create)
+      .mockRejectedValueOnce(httpError(undefined))
+      .mockRejectedValueOnce(httpError(503));
+
+    await migrateLegacyGroups([]);
+    expect(groupsService.create).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(localStorage.getItem(KEY) ?? '[]')).toEqual([offline, serverDown]);
   });
 });
