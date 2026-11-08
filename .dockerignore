@@ -1,0 +1,17 @@
+.git
+.github
+.env
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+venv
+.venv
+.pytest_cache
+.vscode
+.claude
+.agents
+docs/screenshots
+conceitos
+celerybeat-schedule*
+debug_scrapers.py

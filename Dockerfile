@@ -12,4 +12,6 @@ RUN apt-get update && apt-get install -y \
 RUN playwright install chromium
 COPY . .
 RUN prisma generate
-CMD ["python", "execution/web_server.py"]
+EXPOSE 8000
+# Comando padrão: a API. Worker e beat do Celery usam a mesma imagem trocando o comando.
+CMD ["uvicorn", "execution.web_server:app", "--host", "0.0.0.0", "--port", "8000"]
