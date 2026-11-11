@@ -62,45 +62,109 @@ def _parse_price_text(text: str) -> float | None:
         return None
 
 
-def _extract_price_from_soup(soup) -> tuple[float | None, str, float]:
+# Trusted containers for product price extraction.
+# Prices outside these areas (e.g. carousels, sponsored cards, "sims-*" widgets)
+# are ignored to avoid false positives.
+_PRODUCT_PRICE_CONTAINERS = (
+    "#corePrice_feature_div",
+    "#corePriceDisplay_desktop_feature_div",
+    "#apex_desktop",
+    "#apex_desktop_newAccordionRow",
+    "#mediaTab_heading_0",
+)
+
+
+# Positive signs that the listing has no main offer (only "see all buying choices").
+_NO_MAIN_OFFER_SIGNALS = "#buybox-see-all-buying-choices, #all-offers-display"
+
+
+def _extract_tmm_selected_price(soup) -> tuple[float, str, float, str] | None:
     """
-    Returns (price, selector_used, confidence_score).
-    Never returns crossed-out prices, "was" prices, or installment blocks.
+    Extracts the price from the SELECTED format button in #tmmSwatches.
+
+    Returns (price, selector_used, confidence, offer_type) or None.
+    - "a partir de R$X" → offer_type "third_party_from", confidence 0.6
+    - Direct price (e.g. Kindle R$84,71) → offer_type "main", confidence 0.78
     """
-    # Strategy 0: span.priceToPay / apexPriceToPay — explicit "price you pay" class.
-    # Amazon uses this for sale prices AND regular prices on modern pages.
-    # Must run before Strategy 1 to catch discounted prices correctly.
-    for cls in ("span.priceToPay", "span.apexPriceToPay"):
-        pay_el = soup.select_one(cls)
-        if pay_el:
-            offscreen = pay_el.select_one("span.a-offscreen")
+    tmm = soup.select_one("#tmmSwatches")
+    if not tmm:
+        return None
+
+    selected = tmm.select_one(".a-button-selected")
+    if not selected:
+        return None
+
+    slot_price = selected.select_one("span.slot-price")
+    if not slot_price:
+        return None
+
+    price_text = slot_price.get_text(strip=True)
+    if not price_text:
+        return None
+
+    is_from_price = "a partir de" in price_text.lower()
+
+    match = re.search(r"R\$[\s\xa0]*(\d[\d.,]*)", price_text.replace("\xa0", " "))
+    if not match:
+        return None
+
+    val = _parse_price_text(match.group(0))
+    if not val:
+        return None
+
+    if is_from_price:
+        return val, "#tmmSwatches .a-button-selected .slot-price (a partir de)", 0.6, "third_party_from"
+    return val, "#tmmSwatches .a-button-selected .slot-price", 0.78, "main"
+
+
+def _extract_price_from_soup(soup) -> tuple[float | None, str, float, str]:
+    """
+    Returns (price, selector_used, confidence_score, offer_type).
+
+    Searches ONLY inside trusted product-price containers to avoid picking up
+    prices from recommendation carousels, sponsored cards, or "sims-*" widgets.
+    offer_type is "main" for the primary offer or "third_party_from" for
+    the "a partir de" price of the selected format in #tmmSwatches.
+    """
+    # Strategy 0: span.priceToPay / apexPriceToPay inside trusted containers.
+    for container_sel in _PRODUCT_PRICE_CONTAINERS:
+        container = soup.select_one(container_sel)
+        if not container:
+            continue
+        for cls in ("span.priceToPay", "span.apexPriceToPay"):
+            pay_el = container.select_one(cls)
+            if pay_el:
+                offscreen = pay_el.select_one("span.a-offscreen")
+                if offscreen:
+                    val = _parse_price_text(offscreen.get_text(strip=True))
+                    if val:
+                        return val, f"{container_sel} {cls} span.a-offscreen", 0.96, "main"
+
+    # Strategy 1: span.a-offscreen inside non-struck, non-"was" span.a-price
+    # ONLY inside trusted price containers.
+    for container_sel in _PRODUCT_PRICE_CONTAINERS:
+        container = soup.select_one(container_sel)
+        if not container:
+            continue
+        for price_span in container.select("span.a-price"):
+            classes = price_span.get("class", [])
+            if "a-text-strike" in classes or "a-text-price" in classes:
+                continue
+            offscreen = price_span.select_one("span.a-offscreen")
             if offscreen:
                 val = _parse_price_text(offscreen.get_text(strip=True))
                 if val:
-                    return val, f"{cls} span.a-offscreen", 0.96
+                    return val, f"{container_sel} span.a-price span.a-offscreen", 0.92, "main"
 
-    # Strategy 1: span.a-offscreen inside non-struck, non-"was" span.a-price
-    # Skip a-text-strike (strikethrough) AND a-text-price (Amazon's "was price" grey text)
-    for price_span in soup.select("span.a-price"):
-        classes = price_span.get("class", [])
-        if "a-text-strike" in classes or "a-text-price" in classes:
-            continue  # skip the "from" / original / "was" price
-        offscreen = price_span.select_one("span.a-offscreen")
-        if offscreen:
-            val = _parse_price_text(offscreen.get_text(strip=True))
-            if val:
-                return val, "span.a-price:not(.a-text-strike):not(.a-text-price) > span.a-offscreen", 0.92
-
-    # Strategy 2: #corePrice_feature_div — primary product price container
+    # Strategy 2: #corePrice_feature_div fallback — non-struck offscreen
     core = soup.select_one("#corePrice_feature_div")
     if core:
-        # Prefer the first non-struck offscreen inside the core price div
         for offscreen in core.select("span.a-offscreen"):
             parent = offscreen.parent
             if parent and "a-text-strike" not in parent.get("class", []):
                 val = _parse_price_text(offscreen.get_text(strip=True))
                 if val:
-                    return val, "#corePrice_feature_div span.a-offscreen", 0.88
+                    return val, "#corePrice_feature_div span.a-offscreen", 0.88, "main"
 
     # Strategy 3: legacy price block IDs and deal price (older product pages)
     for price_id in ("#priceblock_dealprice", "#priceblock_ourprice", "#price_inside_buybox"):
@@ -108,25 +172,41 @@ def _extract_price_from_soup(soup) -> tuple[float | None, str, float]:
         if el:
             val = _parse_price_text(el.get_text(strip=True))
             if val:
-                return val, price_id, 0.82
+                return val, price_id, 0.82, "main"
 
-    # Strategy 4: whole + fraction split (more error-prone, lower confidence)
-    for price_span in soup.select("span.a-price"):
-        if "a-text-strike" in price_span.get("class", []) or "a-text-price" in price_span.get("class", []):
+    # Strategy 4: price of the SELECTED format button in #tmmSwatches (direct price only).
+    # Runs before the whole + fraction split: in some listings the visible block carries a
+    # different amount in whole/fraction (while its a-offscreen is empty), and the selected
+    # format button is the reference that matches the product's own offer. Covers Kindle too.
+    tmm_result = _extract_tmm_selected_price(soup)
+    if tmm_result and tmm_result[3] == "main":
+        return tmm_result
+
+    # Strategy 5: whole + fraction split ONLY inside trusted containers
+    for container_sel in _PRODUCT_PRICE_CONTAINERS:
+        container = soup.select_one(container_sel)
+        if not container:
             continue
-        whole_el = price_span.select_one("span.a-price-whole")
-        if whole_el:
-            try:
-                whole = re.sub(r"[^\d]", "", whole_el.get_text(strip=True))
-                frac_el = price_span.select_one("span.a-price-fraction")
-                frac = re.sub(r"[^\d]", "", frac_el.get_text(strip=True)) if frac_el else "00"
-                val = float(f"{whole}.{frac or '00'}")
-                if val > 0:
-                    return val, "span.a-price-whole + span.a-price-fraction", 0.72
-            except (ValueError, TypeError):
-                pass
+        for price_span in container.select("span.a-price"):
+            if "a-text-strike" in price_span.get("class", []) or "a-text-price" in price_span.get("class", []):
+                continue
+            whole_el = price_span.select_one("span.a-price-whole")
+            if whole_el:
+                try:
+                    whole = re.sub(r"[^\d]", "", whole_el.get_text(strip=True))
+                    frac_el = price_span.select_one("span.a-price-fraction")
+                    frac = re.sub(r"[^\d]", "", frac_el.get_text(strip=True)) if frac_el else "00"
+                    val = float(f"{whole}.{frac or '00'}")
+                    if val > 0:
+                        return val, f"{container_sel} span.a-price-whole + span.a-price-fraction", 0.72, "main"
+                except (ValueError, TypeError):
+                    pass
 
-    return None, "", 0.0
+    # Strategy 6: "a partir de" price of the selected format (no main offer, only other sellers).
+    if tmm_result:
+        return tmm_result
+
+    return None, "", 0.0, "none"
 
 
 def _is_out_of_stock(soup) -> bool:
@@ -158,7 +238,7 @@ def extract_from_html(html: str) -> dict | None:
         }
 
     try:
-        price, selector_used, confidence = _extract_price_from_soup(soup)
+        price, selector_used, confidence, offer_type = _extract_price_from_soup(soup)
         in_stock = not _is_out_of_stock(soup)
 
         title_el = soup.select_one("#productTitle")
@@ -181,12 +261,29 @@ def extract_from_html(html: str) -> dict | None:
                     "confidence_score": 0.75,
                     "block_category": None,
                 }
-            logger.info("Amazon | preço não encontrado em nenhum seletor")
-            return None
+            if not title or not soup.select_one(_NO_MAIN_OFFER_SIGNALS):
+                # No positive sign that the listing lacks a main offer (the price block may just
+                # be missing from this HTML): let the cascade escalate, as before
+                logger.info("Amazon | preço não encontrado em nenhum seletor")
+                return None
+            # Product page read successfully, Amazon only offers "see all buying choices"
+            # and there is no "a partir de" price: no main offer
+            logger.info("Amazon | sem oferta principal | offer_type=none")
+            return {
+                "name": title,
+                "price": None,
+                "currency": "BRL",
+                "image_url": image_url,
+                "in_stock": True,
+                "selector_used": "",
+                "confidence_score": 0.6,
+                "block_category": None,
+                "offer_type": "none",
+            }
 
         logger.debug(
-            "Amazon | price=%.2f selector=%s confidence=%.2f in_stock=%s",
-            price, selector_used, confidence, in_stock,
+            "Amazon | price=%.2f selector=%s confidence=%.2f in_stock=%s offer_type=%s",
+            price, selector_used, confidence, in_stock, offer_type,
         )
 
         return {
@@ -198,6 +295,7 @@ def extract_from_html(html: str) -> dict | None:
             "selector_used": selector_used,
             "confidence_score": confidence,
             "block_category": None,
+            "offer_type": offer_type,
         }
     except Exception:
         logger.exception("Amazon | erro inesperado ao extrair HTML")
