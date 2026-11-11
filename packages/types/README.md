@@ -23,7 +23,18 @@ interface Product {
   currentPrice?: number | null
   inStock?: boolean
   scrapedAt?: string
+  // Última verificação (GET /products):
+  // last_checked = última checagem BEM-SUCEDIDA; last_attempt_at = última
+  // tentativa de qualquer resultado. A tentativa FALHOU quando
+  // last_check_status é 'error'/'blocked' e (last_checked é nulo OU
+  // last_attempt_at > last_checked).
+  last_checked?: string | null
+  last_attempt_at?: string | null
+  last_check_status?: LastCheckStatus | null
+  last_check_error?: string | null   // motivo: login_wall, captcha, access_denied, rate_limited, challenge_js, scrape_failed, invalid_price, price_rejected, exception
 }
+
+type LastCheckStatus = 'ok' | 'out_of_stock' | 'no_offer' | 'error' | 'blocked'
 
 interface PriceHistoryEntry {
   id: string

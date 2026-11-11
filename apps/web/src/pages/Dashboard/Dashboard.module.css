@@ -355,6 +355,10 @@
   color: var(--color-warning);
 }
 
+.lastCheckedFailed {
+  color: var(--color-danger);
+}
+
 .lastCheckedNone {
   font-size: 12px;
   color: var(--color-text-faint);

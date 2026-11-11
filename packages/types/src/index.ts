@@ -42,6 +42,9 @@ export type Store = 'amazon' | 'mercadolivre' | string;
 
 export type ProductStatus = 'active' | 'paused';
 
+/** Resultado da última tentativa de verificação (GET /products). */
+export type LastCheckStatus = 'ok' | 'out_of_stock' | 'no_offer' | 'error' | 'blocked';
+
 export interface Product {
   id: string;
   url: string;
@@ -52,7 +55,13 @@ export interface Product {
   // Incluídos apenas no GET /products (não no sub-objeto de GET /product/{id}/history)
   current_price?: number | null;
   in_stock?: boolean | null;
+  /** Última checagem BEM-SUCEDIDA (não cache). */
   last_checked?: string | null;
+  /** Última tentativa, de qualquer resultado (exceto acerto de cache). */
+  last_attempt_at?: string | null;
+  last_check_status?: LastCheckStatus | null;
+  /** Motivo curto; só preenchido quando last_check_status é 'error' ou 'blocked'. */
+  last_check_error?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -149,7 +158,11 @@ export interface ProductGroup {
 export type RefreshPriceResponse =
   | { status: 'ok'; price: number; in_stock: boolean; name: string | null; source: string }
   | { status: 'out_of_stock'; in_stock: false; detail: string }
-  | { status: 'error'; reason: 'unavailable' | 'blocked' | 'scraping_failed' | 'exception'; detail: string };
+  | {
+      status: 'error';
+      reason: 'unavailable' | 'blocked' | 'scraping_failed' | 'exception' | 'no_offer';
+      detail: string;
+    };
 
 /** GET /schedule/next-check — próxima verificação automática (Celery Beat). */
 export interface NextCheckResponse {

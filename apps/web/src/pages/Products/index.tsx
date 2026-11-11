@@ -11,7 +11,7 @@ import { SelectionBar } from '@/components/SelectionBar';
 import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
-import { formatLastChecked, isStale } from '@/features/products/formatLastChecked';
+import { describeLastCheck } from '@/features/products/formatLastChecked';
 import {
   useProducts,
   useRefreshPrice,
@@ -279,23 +279,38 @@ export function Products() {
     {
       key: 'last_checked',
       header: 'Última verificação',
-      width: '160px',
+      width: '180px',
       render: (r) => {
-        if (!r.last_checked) {
+        const display = describeLastCheck(r);
+        if (display.kind === 'none') {
           return <span className={styles.dateNone}>Ainda não verificado</span>;
         }
-        const stale = isStale(r.last_checked);
+        if (display.kind === 'failed') {
+          return (
+            <span
+              className={[styles.date, styles.dateFailed].join(' ')}
+              title={
+                display.checkedAt
+                  ? `Última verificação bem-sucedida: ${formatDate(display.checkedAt)}`
+                  : 'Nunca verificado com sucesso'
+              }
+            >
+              <Icon name="alert" size={12} />
+              {display.text}
+            </span>
+          );
+        }
         return (
           <span
-            className={[styles.date, stale ? styles.dateStale : ''].join(' ')}
+            className={[styles.date, display.stale ? styles.dateStale : ''].join(' ')}
             title={
-              stale
+              display.stale
                 ? 'Sem verificação há mais de 12 h'
-                : `Adicionado em ${formatDate(r.created_at)}`
+                : `Verificado em ${formatDate(display.checkedAt)}`
             }
           >
-            {stale && <Icon name="alert" size={12} />}
-            {formatLastChecked(r.last_checked)}
+            {display.stale && <Icon name="alert" size={12} />}
+            {display.noOffer ? `${display.when} · sem oferta principal` : display.when}
           </span>
         );
       },

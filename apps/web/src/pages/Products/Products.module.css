@@ -86,6 +86,10 @@
   color: var(--color-warning);
 }
 
+.dateFailed {
+  color: var(--color-danger);
+}
+
 .dateNone {
   font-size: 12px;
   color: var(--color-text-faint);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
@@ -10,7 +10,7 @@ import { SelectionBar } from '@/components/SelectionBar';
 import { NextCheckCard } from '@/features/schedule/components/NextCheckCard';
 import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
-import { formatLastChecked, isStale } from '@/features/products/formatLastChecked';
+import { describeLastCheck, lastAttemptAt, type LastCheckDisplay } from '@/features/products/formatLastChecked';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
 import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
@@ -101,12 +101,49 @@ function GroupRow({
   const cheapest = sorted.find((p) => p.current_price != null);
   const thumb = groupProducts.find((p) => p.image_url)?.image_url;
   const affected = groupProducts.filter((p) => p.in_stock === false);
-  const latestChecked = groupProducts.reduce<string | null>((latest, p) => {
-    if (!p.last_checked) return latest;
-    if (!latest || new Date(p.last_checked) > new Date(latest)) return p.last_checked;
-    return latest;
-  }, null);
-  const groupStale = latestChecked != null && isStale(latestChecked);
+
+  // Linha de verificação do grupo: reflete a tentativa mais recente entre os
+  // anúncios (falha recente aparece como falha; sucesso antigo pode ficar stale).
+  const now = new Date();
+  const latestCheck = groupProducts
+    .map((product) => ({ at: lastAttemptAt(product), display: describeLastCheck(product, now) }))
+    .filter(
+      (entry): entry is { at: string; display: Exclude<LastCheckDisplay, { kind: 'none' }> } =>
+        entry.at != null && entry.display.kind !== 'none',
+    )
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+
+  let groupCheckLine: ReactNode = null;
+  if (latestCheck) {
+    const { display } = latestCheck;
+    groupCheckLine =
+      display.kind === 'failed' ? (
+        <span
+          className={[styles.lastChecked, styles.lastCheckedFailed].join(' ')}
+          title={
+            display.checkedAt
+              ? `Última verificação bem-sucedida do grupo: ${formatDate(display.checkedAt)}`
+              : 'Nenhum anúncio do grupo verificado com sucesso'
+          }
+        >
+          <Icon name="alert" size={12} />
+          · {display.text}
+        </span>
+      ) : (
+        <span
+          className={[styles.lastChecked, display.stale ? styles.lastCheckedStale : ''].join(' ')}
+          title={
+            display.stale
+              ? 'Sem verificação há mais de 12 h'
+              : `Verificado em ${formatDate(display.checkedAt)}`
+          }
+        >
+          {display.stale && <Icon name="alert" size={12} />}
+          · Verificado {display.when}
+          {display.noOffer ? ' · sem oferta principal' : ''}
+        </span>
+      );
+  }
 
   return (
     <div
@@ -157,15 +194,7 @@ function GroupRow({
               </span>
             ))}
             <span className={styles.listingCount}>{groupProducts.length} anúncios</span>
-            {latestChecked && (
-              <span
-                className={[styles.lastChecked, groupStale ? styles.lastCheckedStale : ''].join(' ')}
-                title={groupStale ? 'Sem verificação há mais de 12 h' : formatDate(latestChecked)}
-              >
-                {groupStale && <Icon name="alert" size={12} />}
-                · Verificado {formatLastChecked(latestChecked)}
-              </span>
-            )}
+            {groupCheckLine}
           </div>
         </div>
 
@@ -196,6 +225,48 @@ function ProductRow({
   onToggleSelect: () => void;
 }) {
   const isPaused = product.status === 'paused';
+  const display = describeLastCheck(product);
+  const suffix = isPaused ? ' · Pausado' : '';
+
+  let checkLine: ReactNode;
+  if (display.kind === 'none') {
+    checkLine = (
+      <span className={styles.lastCheckedNone}>
+        Ainda não verificado{suffix}
+      </span>
+    );
+  } else if (display.kind === 'failed') {
+    checkLine = (
+      <span
+        className={[styles.lastChecked, styles.lastCheckedFailed].join(' ')}
+        title={
+          display.checkedAt
+            ? `Última verificação bem-sucedida: ${formatDate(display.checkedAt)}`
+            : 'Nunca verificado com sucesso'
+        }
+      >
+        <Icon name="alert" size={12} />
+        {display.text}
+        {suffix}
+      </span>
+    );
+  } else {
+    checkLine = (
+      <span
+        className={[styles.lastChecked, display.stale ? styles.lastCheckedStale : ''].join(' ')}
+        title={
+          display.stale
+            ? 'Sem verificação há mais de 12 h'
+            : `Verificado em ${formatDate(display.checkedAt)}`
+        }
+      >
+        {display.stale && <Icon name="alert" size={12} />}
+        Verificado {display.when}
+        {display.noOffer ? ' · sem oferta principal' : ''}
+        {suffix}
+      </span>
+    );
+  }
 
   return (
     <div
@@ -244,27 +315,7 @@ function ProductRow({
               </Tooltip>
             )}
           </div>
-          {product.last_checked ? (
-            <span
-              className={[
-                styles.lastChecked,
-                isStale(product.last_checked) ? styles.lastCheckedStale : '',
-              ].join(' ')}
-              title={
-                isStale(product.last_checked)
-                  ? 'Sem verificação há mais de 12 h'
-                  : formatDate(product.last_checked)
-              }
-            >
-              {isStale(product.last_checked) && <Icon name="alert" size={12} />}
-              Verificado {formatLastChecked(product.last_checked)}
-              {isPaused ? ' · Pausado' : ''}
-            </span>
-          ) : (
-            <span className={styles.lastCheckedNone}>
-              Ainda não verificado{isPaused ? ' · Pausado' : ''}
-            </span>
-          )}
+          {checkLine}
         </div>
 
         <div className={styles.productMeta}>

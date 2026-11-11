@@ -92,6 +92,11 @@ export function useRefreshPrice() {
       // O endpoint é síncrono — resultado já está no DB quando voltamos
       queryClient.invalidateQueries({ queryKey: productKeys.all });
     },
+    onError: () => {
+      // A falha também é gravada (lastAttemptAt/lastCheckStatus) — revalida para a
+      // linha mostrar o novo estado mesmo quando a checagem falha.
+      queryClient.invalidateQueries({ queryKey: productKeys.all });
+    },
   });
 }
 
