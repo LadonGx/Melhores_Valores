@@ -330,11 +330,12 @@ class TestAmazonRealPages:
         assert result["confidence_score"] >= 0.72
         assert result["in_stock"] is True
 
-    def test_selected_format_price_wins_over_divergent_whole_fraction(self):
-        """6525946328: o bloco visível (a-offscreen vazio) traz 67,45 em whole/fraction, mas o
-        botão do formato selecionado e #tp_price_block_total_price_ww dizem R$ 71,00."""
+    def test_promotional_visible_price_wins_over_regular_format_price(self):
+        """6525946328: o preço em destaque é R$ 67,45 (5% off à vista no Pix/NuPay); o botão
+        do formato selecionado mostra o preço normal, R$ 71,00. O projeto registra sempre o
+        preço com promoção."""
         result = _amazon_fixture("6525946328")
-        assert result["price"] == 71.00
+        assert result["price"] == 67.45
         assert result["offer_type"] == "main"
 
 

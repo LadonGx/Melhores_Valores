@@ -174,15 +174,10 @@ def _extract_price_from_soup(soup) -> tuple[float | None, str, float, str]:
             if val:
                 return val, price_id, 0.82, "main"
 
-    # Strategy 4: price of the SELECTED format button in #tmmSwatches (direct price only).
-    # Runs before the whole + fraction split: in some listings the visible block carries a
-    # different amount in whole/fraction (while its a-offscreen is empty), and the selected
-    # format button is the reference that matches the product's own offer. Covers Kindle too.
-    tmm_result = _extract_tmm_selected_price(soup)
-    if tmm_result and tmm_result[3] == "main":
-        return tmm_result
-
-    # Strategy 5: whole + fraction split ONLY inside trusted containers
+    # Strategy 4: whole + fraction of the visible (highlighted) price ONLY inside trusted containers.
+    # This is the price Amazon shows in big type, already with the promotion applied (e.g. the
+    # "5% off à vista" Pix/NuPay price), while #tmmSwatches keeps the regular price. The project
+    # always records the promotional price, so this runs before the format button.
     for container_sel in _PRODUCT_PRICE_CONTAINERS:
         container = soup.select_one(container_sel)
         if not container:
@@ -201,6 +196,12 @@ def _extract_price_from_soup(soup) -> tuple[float | None, str, float, str]:
                         return val, f"{container_sel} span.a-price-whole + span.a-price-fraction", 0.72, "main"
                 except (ValueError, TypeError):
                     pass
+
+    # Strategy 5: price of the SELECTED format button in #tmmSwatches (direct price only).
+    # Fallback when the page has no visible price block (e.g. Kindle).
+    tmm_result = _extract_tmm_selected_price(soup)
+    if tmm_result and tmm_result[3] == "main":
+        return tmm_result
 
     # Strategy 6: "a partir de" price of the selected format (no main offer, only other sellers).
     if tmm_result:
