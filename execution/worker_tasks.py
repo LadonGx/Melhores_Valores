@@ -15,8 +15,9 @@ from .db_client import (
     get_last_valid_price_for_url,
     get_or_create_product,
     is_garbage_name as _is_garbage_name,
+    mark_product_checked,
 )
-from .scraping_orchestrator import scrape_product
+from .scraping_orchestrator import scrape_product_with_block
 from .search_orchestrator import run_product_search
 
 load_dotenv()
@@ -118,23 +119,52 @@ def run_price_pipeline(
                 name=best_name,
             )
 
-    scrape_result = scrape_product(url, store=normalized_store)
+    try:
+        return _check_product(url, normalized_store, fallback_name, fallback_image)
+    except Exception:
+        _mark_unexpected_failure(url, normalized_store, fallback_name, fallback_image)
+        raise
+
+
+def _mark_unexpected_failure(
+    url: str, store: str, fallback_name: str | None, fallback_image: str | None
+) -> None:
+    """Marca a checagem como `error`/`exception` quando o pipeline estourou uma exceção.
+
+    Best effort: se o próprio banco for a causa, só loga — a exceção original segue para o chamador.
+    """
+    try:
+        product = get_or_create_product(url=url, name=fallback_name, store=store, image_url=fallback_image)
+        mark_product_checked(product.id, "error", "exception")
+    except Exception:
+        logger.exception("Não foi possível registrar a falha da checagem | url=%s", url)
+
+
+def _check_product(
+    url: str, store: str, fallback_name: str | None, fallback_image: str | None
+) -> dict[str, Any]:
+    """Scraping real (cascata) + gravação no banco + registro do resultado da checagem."""
+    scrape_result, block_category = scrape_product_with_block(url, store=store)
     if not scrape_result:
         # Todos os níveis da cascata falharam por motivo técnico (timeout, bloqueio,
         # Firecrawl indisponível, etc.) — nenhum adapter confirmou indisponibilidade,
         # então não grava histórico (evita marcar o produto como "fora de estoque"
         # por uma falha passageira). Só garante que o produto exista no DB.
-        get_or_create_product(url=url, name=fallback_name, store=normalized_store, image_url=fallback_image)
+        product = get_or_create_product(url=url, name=fallback_name, store=store, image_url=fallback_image)
+        if block_category:
+            mark_product_checked(product.id, "blocked", block_category)
+        else:
+            mark_product_checked(product.id, "error", "scrape_failed")
         return {
             "status": "error",
             "url": url,
-            "store": normalized_store,
+            "store": store,
             "reason": "Falha ao extrair dados através da cascata.",
         }
 
     # Compatibilidade com Firecrawl / Nível 1 & 2
     if "data" in scrape_result:
-        parsed_data = parse_product_data(normalized_store, scrape_result)
+        parsed_data = parse_product_data(store, scrape_result)
         source = "firecrawl"
     else:
         parsed_data = scrape_result
@@ -154,29 +184,42 @@ def run_price_pipeline(
     in_stock = parsed_data.get("in_stock", True)
 
     if not isinstance(product_price, (int, float)) or product_price <= 0:
-        product = get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
+        product = get_or_create_product(url=url, name=product_name, store=store, image_url=product_image)
+        if parsed_data.get("offer_type") == "none":
+            # Página lida corretamente, mas o anúncio está sem oferta principal e sem
+            # preço "a partir de": não é falha nem fora de estoque — não grava histórico.
+            logger.info("Anúncio sem oferta principal | url=%s store=%s", url, store)
+            mark_product_checked(product.id, "no_offer")
+            return {
+                "status": "no_offer",
+                "url": url,
+                "store": store,
+                "reason": "Anúncio sem oferta principal.",
+            }
         if not in_stock:
             # Confirmado fora de estoque pelo adapter — registra no histórico
             logger.info(
-                "Produto confirmado fora de estoque sem preço | url=%s store=%s", url, normalized_store
+                "Produto confirmado fora de estoque sem preço | url=%s store=%s", url, store
             )
             add_price_history(product_id=product.id, price=None, in_stock=False)
+            mark_product_checked(product.id, "out_of_stock")
             return {
                 "status": "out_of_stock",
                 "url": url,
-                "store": normalized_store,
+                "store": store,
                 "reason": "Produto fora de estoque.",
             }
         logger.warning(
             "Preço inválido extraído (%.2f) para url=%s store=%s. Abortando salvamento.",
             product_price or 0,
             url,
-            normalized_store,
+            store,
         )
+        mark_product_checked(product.id, "error", "invalid_price")
         return {
             "status": "error",
             "url": url,
-            "store": normalized_store,
+            "store": store,
             "reason": f"Preço inválido extraído: {product_price}. Possível bloqueio anti-bot.",
         }
 
@@ -190,12 +233,12 @@ def run_price_pipeline(
                 "price=%.2f confidence=%.2f | url=%s",
                 product_price, confidence, url,
             )
-            if product_name:
-                get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
+            product = get_or_create_product(url=url, name=product_name, store=store, image_url=product_image)
+            mark_product_checked(product.id, "error", "price_rejected")
             return {
                 "status": "error",
                 "url": url,
-                "store": normalized_store,
+                "store": store,
                 "reason": f"Preço {product_price} diverge do histórico e confiança é baixa ({confidence:.2f}). Não salvo.",
             }
         logger.warning(
@@ -203,21 +246,23 @@ def run_price_pipeline(
             confidence, url,
         )
 
-    product = get_or_create_product(url=url, name=product_name, store=normalized_store, image_url=product_image)
+    product = get_or_create_product(url=url, name=product_name, store=store, image_url=product_image)
+    # A deduplicação pode não gravar nada; a checagem aconteceu de qualquer forma.
     add_price_history(product_id=product.id, price=float(product_price), in_stock=in_stock)
+    mark_product_checked(product.id, "ok")
 
     set_cached_price(
         product_url=url,
         price=float(product_price),
         name=product_name,
-        store=normalized_store,
+        store=store,
         ttl=7200,
     )
 
     return _build_success_payload(
         source=source,
         url=url,
-        store=normalized_store,
+        store=store,
         name=product_name,
         price=float(product_price),
         in_stock=in_stock,

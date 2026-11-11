@@ -21,7 +21,7 @@ def _make_product(product_id="prod-1", name="Produto Teste"):
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 MOCK_PATCHES = {
-    "scrape": "execution.worker_tasks.scrape_product",
+    "scrape": "execution.worker_tasks.scrape_product_with_block",
     "cache_get": "execution.worker_tasks.get_cached_price",
     "cache_set": "execution.worker_tasks.set_cached_price",
     "get_or_create": "execution.worker_tasks.get_or_create_product",
@@ -30,7 +30,15 @@ MOCK_PATCHES = {
     # Imported as `is_garbage_name as _is_garbage_name` in worker_tasks
     "is_garbage": "execution.worker_tasks._is_garbage_name",
     "normalize_store": "execution.worker_tasks.normalize_store",
+    "mark": "execution.worker_tasks.mark_product_checked",
 }
+
+
+@pytest.fixture(autouse=True)
+def mark_checked():
+    """mark_product_checked mockado em todos os testes; devolve o mock para asserts."""
+    with patch(MOCK_PATCHES["mark"]) as mock_mark:
+        yield mock_mark
 
 
 # ─── Cache hit path ───────────────────────────────────────────────────────────
@@ -52,7 +60,7 @@ class TestCacheHit:
         product = _make_product()
         scrape_result = {"price": 189.90, "confidence_score": 0.92, "in_stock": True, "name": "Produto"}
         with patch(MOCK_PATCHES["cache_get"]) as mock_cache, \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]), \
              patch(MOCK_PATCHES["cache_set"]), \
@@ -76,7 +84,7 @@ class TestSuccessfulScrape:
             "confidence_score": 0.92,
         }
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]) as mock_history, \
              patch(MOCK_PATCHES["cache_set"]), \
@@ -92,7 +100,7 @@ class TestSuccessfulScrape:
         product = _make_product()
         scrape_result = {"price": 99.0, "name": "Produto", "image_url": None, "in_stock": True, "confidence_score": 0.9}
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]), \
              patch(MOCK_PATCHES["cache_set"]) as mock_cache_set, \
@@ -111,7 +119,7 @@ class TestFailureAndOutOfStock:
         so the price history should be left untouched."""
         product = _make_product()
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=None), \
+             patch(MOCK_PATCHES["scrape"], return_value=(None, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]) as mock_history, \
              patch(MOCK_PATCHES["is_garbage"], return_value=False):
@@ -123,7 +131,7 @@ class TestFailureAndOutOfStock:
         product = _make_product()
         scrape_result = {"price": None, "in_stock": False, "confidence_score": 0.75, "name": "Produto", "image_url": None}
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]) as mock_history, \
              patch(MOCK_PATCHES["last_price"], return_value=None), \
@@ -136,7 +144,7 @@ class TestFailureAndOutOfStock:
         product = _make_product()
         scrape_result = {"price": None, "in_stock": False, "confidence_score": 0.75, "name": "Produto", "image_url": None}
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]), \
              patch(MOCK_PATCHES["cache_set"]) as mock_cache_set, \
@@ -163,7 +171,7 @@ class TestFailureAndOutOfStock:
             }
         }
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]) as mock_history, \
              patch(MOCK_PATCHES["last_price"], return_value=None), \
@@ -186,7 +194,7 @@ class TestSanityCheck:
             "confidence_score": 0.60,  # below 0.75 threshold
         }
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]) as mock_history, \
              patch(MOCK_PATCHES["last_price"], return_value=199.90), \
@@ -205,7 +213,7 @@ class TestSanityCheck:
             "confidence_score": 0.92,  # above 0.75 threshold
         }
         with patch(MOCK_PATCHES["cache_get"], return_value=None), \
-             patch(MOCK_PATCHES["scrape"], return_value=scrape_result), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
              patch(MOCK_PATCHES["get_or_create"], return_value=product), \
              patch(MOCK_PATCHES["add_history"]) as mock_history, \
              patch(MOCK_PATCHES["cache_set"]), \
@@ -214,3 +222,139 @@ class TestSanityCheck:
             result = run_price_pipeline("https://amazon.com.br/dp/test", "amazon")
             assert result["status"] == "ok"
             mock_history.assert_called_once()
+
+
+# ─── Registro da última verificação (mark_product_checked) ────────────────────
+
+URL = "https://amazon.com.br/dp/test"
+
+
+def _pipeline_patches(scrape_return, product=None, last_price=None):
+    """Patches comuns do caminho 'cache miss + scraping'; devolve o ExitStack já aberto."""
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(patch(MOCK_PATCHES["cache_get"], return_value=None))
+    stack.enter_context(patch(MOCK_PATCHES["scrape"], return_value=scrape_return))
+    stack.enter_context(patch(MOCK_PATCHES["get_or_create"], return_value=product or _make_product()))
+    stack.enter_context(patch(MOCK_PATCHES["cache_set"]))
+    stack.enter_context(patch(MOCK_PATCHES["last_price"], return_value=last_price))
+    stack.enter_context(patch(MOCK_PATCHES["is_garbage"], return_value=False))
+    return stack
+
+
+class TestLastCheckMarking:
+    def test_successful_scrape_marks_ok(self, mark_checked):
+        result = {"price": 199.90, "name": "Produto", "in_stock": True, "confidence_score": 0.92}
+        with _pipeline_patches((result, None)), patch(MOCK_PATCHES["add_history"]):
+            run_price_pipeline(URL, "amazon")
+        mark_checked.assert_called_once_with("prod-1", "ok")
+
+    def test_deduplicated_history_still_marks_ok(self, mark_checked):
+        """add_price_history devolve None quando nada mudou no dia — a checagem
+        aconteceu mesmo assim, e é isso que 'Última verificação' mostra."""
+        result = {"price": 199.90, "name": "Produto", "in_stock": True, "confidence_score": 0.92}
+        with _pipeline_patches((result, None)), \
+             patch(MOCK_PATCHES["add_history"], return_value=None) as mock_history:
+            payload = run_price_pipeline(URL, "amazon")
+        assert payload["status"] == "ok"
+        mock_history.assert_called_once()
+        mark_checked.assert_called_once_with("prod-1", "ok")
+
+    def test_third_party_from_offer_follows_normal_path(self, mark_checked):
+        result = {
+            "price": 120.0, "name": "Produto", "in_stock": True,
+            "confidence_score": 0.6, "offer_type": "third_party_from",
+        }
+        with _pipeline_patches((result, None)), patch(MOCK_PATCHES["add_history"]) as mock_history:
+            payload = run_price_pipeline(URL, "amazon")
+        assert payload["status"] == "ok"
+        mock_history.assert_called_once_with(product_id="prod-1", price=120.0, in_stock=True)
+        mark_checked.assert_called_once_with("prod-1", "ok")
+
+    def test_out_of_stock_marks_out_of_stock(self, mark_checked):
+        result = {"price": None, "in_stock": False, "confidence_score": 0.75, "name": "Produto"}
+        with _pipeline_patches((result, None)), patch(MOCK_PATCHES["add_history"]):
+            payload = run_price_pipeline(URL, "amazon")
+        assert payload["status"] == "out_of_stock"
+        mark_checked.assert_called_once_with("prod-1", "out_of_stock")
+
+    def test_no_offer_marks_no_offer_and_skips_history(self, mark_checked):
+        result = {
+            "price": None, "in_stock": True, "confidence_score": 0.6,
+            "offer_type": "none", "block_category": None, "name": "Produto",
+        }
+        with _pipeline_patches((result, None)), \
+             patch(MOCK_PATCHES["add_history"]) as mock_history:
+            payload = run_price_pipeline(URL, "amazon")
+        assert payload == {
+            "status": "no_offer",
+            "url": URL,
+            "store": "amazon",
+            "reason": "Anúncio sem oferta principal.",
+        }
+        mock_history.assert_not_called()
+        mark_checked.assert_called_once_with("prod-1", "no_offer")
+
+    def test_cascade_failure_with_block_marks_blocked(self, mark_checked):
+        with _pipeline_patches((None, "captcha")), patch(MOCK_PATCHES["add_history"]) as mock_history:
+            payload = run_price_pipeline(URL, "amazon", fallback_name="Produto Teste")
+        assert payload["status"] == "error"
+        mock_history.assert_not_called()
+        mark_checked.assert_called_once_with("prod-1", "blocked", "captcha")
+
+    def test_cascade_failure_without_block_marks_scrape_failed(self, mark_checked):
+        with _pipeline_patches((None, None)), patch(MOCK_PATCHES["add_history"]):
+            run_price_pipeline(URL, "amazon", fallback_name="Produto Teste")
+        mark_checked.assert_called_once_with("prod-1", "error", "scrape_failed")
+
+    def test_invalid_price_marks_invalid_price(self, mark_checked):
+        result = {"price": None, "in_stock": True, "confidence_score": 0.8, "name": "Produto"}
+        with _pipeline_patches((result, None)), patch(MOCK_PATCHES["add_history"]) as mock_history:
+            payload = run_price_pipeline(URL, "amazon")
+        assert payload["status"] == "error"
+        mock_history.assert_not_called()
+        mark_checked.assert_called_once_with("prod-1", "error", "invalid_price")
+
+    def test_sanity_check_rejection_marks_price_rejected(self, mark_checked):
+        result = {"price": 9999.0, "name": "Produto", "in_stock": True, "confidence_score": 0.6}
+        with _pipeline_patches((result, None), last_price=199.90), \
+             patch(MOCK_PATCHES["add_history"]) as mock_history:
+            payload = run_price_pipeline(URL, "amazon")
+        assert payload["status"] == "error"
+        mock_history.assert_not_called()
+        mark_checked.assert_called_once_with("prod-1", "error", "price_rejected")
+
+    def test_cache_hit_does_not_mark(self, mark_checked):
+        with patch(MOCK_PATCHES["cache_get"], return_value={"price": 199.90, "name": "Produto"}), \
+             patch(MOCK_PATCHES["get_or_create"], return_value=_make_product()), \
+             patch(MOCK_PATCHES["is_garbage"], return_value=False):
+            payload = run_price_pipeline(URL, "amazon")
+        assert payload["source"] == "cache"
+        mark_checked.assert_not_called()
+
+    def test_unexpected_exception_marks_exception_and_reraises(self, mark_checked):
+        product = _make_product()
+        with _pipeline_patches((dict(price=10.0, in_stock=True, confidence_score=0.9, name="P"), None), product), \
+             patch(MOCK_PATCHES["add_history"], side_effect=RuntimeError("banco caiu")):
+            with pytest.raises(RuntimeError):
+                run_price_pipeline(URL, "amazon")
+        mark_checked.assert_called_once_with("prod-1", "error", "exception")
+
+    def test_scrape_exception_marks_exception_and_reraises(self, mark_checked):
+        with patch(MOCK_PATCHES["cache_get"], return_value=None), \
+             patch(MOCK_PATCHES["scrape"], side_effect=RuntimeError("playwright caiu")), \
+             patch(MOCK_PATCHES["get_or_create"], return_value=_make_product()), \
+             patch(MOCK_PATCHES["is_garbage"], return_value=False):
+            with pytest.raises(RuntimeError, match="playwright caiu"):
+                run_price_pipeline(URL, "amazon")
+        mark_checked.assert_called_once_with("prod-1", "error", "exception")
+
+    def test_failure_to_mark_exception_does_not_mask_original_error(self, mark_checked):
+        with patch(MOCK_PATCHES["cache_get"], return_value=None), \
+             patch(MOCK_PATCHES["scrape"], side_effect=RuntimeError("playwright caiu")), \
+             patch(MOCK_PATCHES["get_or_create"], side_effect=RuntimeError("banco fora")), \
+             patch(MOCK_PATCHES["is_garbage"], return_value=False):
+            with pytest.raises(RuntimeError, match="playwright caiu"):
+                run_price_pipeline(URL, "amazon")
+        mark_checked.assert_not_called()

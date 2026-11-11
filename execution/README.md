@@ -74,7 +74,7 @@ search_orchestrator.py
 
 | Method | Path | Sync/Async | Description |
 |---|---|---|---|
-| GET | `/products` | Sync | All products with latest prices |
+| GET | `/products` | Sync | All products with latest prices + last check state (`last_checked`, `last_attempt_at`, `last_check_status`, `last_check_error`) |
 | POST | `/monitor/add` | Async | Add URL, enqueue scraping |
 | DELETE | `/product/{id}` | Sync | Remove product + history |
 | POST | `/product/{id}/refresh` | Sync (60s) | Force price check |
@@ -99,6 +99,7 @@ search_orchestrator.py
 | `get_product_by_id(id)` | Fetch single product |
 | `update_product_name(id, name)` | Manual name override |
 | `add_price_history(product_id, price, inStock)` | Log price entry (deduped: skips insert if price/inStock unchanged since last entry on the same BRT calendar day) |
+| `mark_product_checked(product_id, status, error?)` | Records the outcome of a real check on `Product` (`lastCheckedAt`/`lastAttemptAt`/`lastCheckStatus`/`lastCheckError`); never raises. Success (`ok`, `out_of_stock`, `no_offer`) sets `lastCheckedAt`; failure (`error`, `blocked`) only sets `lastAttemptAt` + error. Cache hits don't call it |
 | `get_price_stats(id)` | current/lowest/average/median price, aggregated in DB |
 | `get_group_price_stats(ids)` | Real pooled lowest/median across multiple products' history |
 | `get_latest_price_entry(id)` | Most recent history row for a product |

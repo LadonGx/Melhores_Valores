@@ -62,6 +62,15 @@ class TestGeneratedClientMatchesSchema:
         assert hasattr(client, "productgroup")
         assert hasattr(client, "productgroupitem")
 
+    def test_product_model_has_last_check_fields(self, real_prisma):
+        """Última verificação real do produto (mark_product_checked em db_client.py)."""
+        fields = real_prisma.models.Product.model_fields
+        for name in ("lastCheckedAt", "lastAttemptAt", "lastCheckStatus", "lastCheckError"):
+            assert name in fields, (
+                f"Prisma model Product is missing '{name}'. "
+                "Run `prisma generate` after schema.prisma changes."
+            )
+
     def test_search_result_model_is_generated(self, real_prisma):
         assert hasattr(real_prisma.models, "SearchResult"), (
             "Prisma models module is missing 'SearchResult'. "

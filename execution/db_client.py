@@ -136,6 +136,37 @@ def update_product_status(product_id: str, status: str) -> Product | None:
         return None
 
 
+_SUCCESSFUL_CHECK_STATUSES = {"ok", "out_of_stock", "no_offer"}
+
+
+def mark_product_checked(product_id: str, status: str, error: str | None = None) -> Product | None:
+    """
+    Registra o resultado de uma checagem real (scraping novo; acerto de cache não conta).
+
+    Sucesso (ok, out_of_stock, no_offer): grava lastCheckedAt e lastAttemptAt = agora e
+    zera lastCheckError. Falha (error, blocked): grava só lastAttemptAt, lastCheckStatus
+    e lastCheckError — lastCheckedAt continua apontando para a última checagem boa.
+
+    Nunca levanta exceção: o resultado da checagem não pode se perder por falha aqui.
+
+    Returns:
+        Product | None: o produto atualizado, ou None se a gravação falhou.
+    """
+    now = datetime.now(timezone.utc)
+    data = {"lastAttemptAt": now, "lastCheckStatus": status}
+    if status in _SUCCESSFUL_CHECK_STATUSES:
+        data["lastCheckedAt"] = now
+        data["lastCheckError"] = None
+    else:
+        data["lastCheckError"] = error
+    try:
+        connect_db()
+        return db.product.update(where={"id": product_id}, data=data)
+    except Exception as e:
+        logger.error(f"Erro ao registrar checagem ({status}) do produto {product_id}: {e}")
+        return None
+
+
 def add_price_history(product_id: str, price: float | None, in_stock: bool = True) -> PriceHistory | None:
     """
     Registra uma nova entrada de preço para um produto específico, com deduplicação:

@@ -25,9 +25,27 @@ Async (Celery worker):
       └─ Level 3 (Firecrawl) → adapter → ... or None  [only if L1+L2 failed]
           │
           └─ db_client.get_or_create_product(url, store, name, imageUrl)
-             db_client.add_price_history(product_id, price, inStock)
+             db_client.add_price_history(product_id, price, inStock)  ← deduped, may write nothing
+             db_client.mark_product_checked(product_id, status, error?)  ← ALWAYS on a real check
              cache_manager.set(url, { price, name, store }, ttl=7200)
 ```
+
+`mark_product_checked` is what feeds "Última verificação" (`GET /products` → `last_checked`),
+because the price history is deduplicated and says nothing about when the product was last
+checked. Cache hits don't call it.
+
+| Outcome | `lastCheckStatus` | `lastCheckError` | Updates `lastCheckedAt` |
+|---|---|---|---|
+| Price read (saved or deduped) | `ok` | — | yes |
+| Confirmed out of stock | `out_of_stock` | — | yes |
+| Page read, no main offer (`offer_type: "none"`) | `no_offer` | — | yes |
+| Cascade failed with a block | `blocked` | `login_wall` / `captcha` / `access_denied` / `rate_limited` / `challenge_js` | no |
+| Cascade failed, no block identified | `error` | `scrape_failed` | no |
+| Page read, no valid price | `error` | `invalid_price` | no |
+| Price rejected by sanity check + low confidence | `error` | `price_rejected` | no |
+| Unexpected exception in the pipeline | `error` | `exception` | no |
+
+`lastAttemptAt` is updated in every row above.
 
 ## Flow 2: Price Refresh (Synchronous)
 

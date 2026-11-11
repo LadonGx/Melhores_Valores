@@ -8,7 +8,7 @@ out-of-stock early stop, and Firecrawl escalation.
 from unittest.mock import patch, MagicMock
 import pytest
 
-from execution.scraping_orchestrator import _result_is_acceptable, scrape_product
+from execution.scraping_orchestrator import _result_is_acceptable, scrape_product, scrape_product_with_block
 
 
 # ─── _result_is_acceptable ────────────────────────────────────────────────────
@@ -133,3 +133,58 @@ class TestScrapeProductCascade:
              patch("execution.scraping_orchestrator.scrape_product_data", return_value={}) as mock_fc:
             scrape_product("https://amazon.com.br/dp/test", store="amazon")
             mock_fc.assert_called_once()
+
+
+# ─── offer_type == "none" (anúncio sem oferta principal) ──────────────────────
+
+class TestNoOfferResult:
+    def test_no_offer_with_enough_confidence_is_acceptable(self):
+        result = {"price": None, "in_stock": True, "confidence_score": 0.6, "offer_type": "none"}
+        assert _result_is_acceptable(result) is True
+
+    def test_no_offer_with_low_confidence_is_not_acceptable(self):
+        result = {"price": None, "in_stock": True, "confidence_score": 0.3, "offer_type": "none"}
+        assert _result_is_acceptable(result) is False
+
+    def test_no_offer_stops_cascade_before_firecrawl(self):
+        no_offer = {"price": None, "in_stock": True, "confidence_score": 0.6, "offer_type": "none"}
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value="<html>ok</html>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: no_offer}), \
+             patch("execution.scraping_orchestrator.fetch_html_playwright") as mock_pw, \
+             patch("execution.scraping_orchestrator.scrape_product_data") as mock_fc:
+            result = scrape_product("https://amazon.com.br/dp/test", store="amazon")
+            assert result == no_offer
+            mock_pw.assert_not_called()
+            mock_fc.assert_not_called()
+
+
+# ─── scrape_product_with_block ────────────────────────────────────────────────
+
+class TestScrapeProductWithBlock:
+    def test_success_returns_result_without_block(self):
+        good_result = {"price": 150.0, "confidence_score": 0.92, "in_stock": True}
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value="<html>ok</html>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: good_result}):
+            result, block = scrape_product_with_block("https://amazon.com.br/dp/test", store="amazon")
+        assert result == good_result
+        assert block is None
+
+    def test_login_wall_returns_block_category(self):
+        login_block = {"price": None, "confidence_score": 0.0, "block_category": "login_wall", "in_stock": None}
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value=None), \
+             patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"mercadolivre": lambda html: login_block}), \
+             patch("execution.scraping_orchestrator.scrape_product_data") as mock_fc:
+            result, block = scrape_product_with_block("https://mercadolivre.com.br/p/test", store="mercadolivre")
+        assert result is None
+        assert block == "login_wall"
+        mock_fc.assert_not_called()
+
+    def test_failure_without_block_returns_no_category(self):
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value=None), \
+             patch("execution.scraping_orchestrator.fetch_html_playwright", return_value=None), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: None}), \
+             patch("execution.scraping_orchestrator.scrape_product_data", return_value=None):
+            result, block = scrape_product_with_block("https://amazon.com.br/dp/test", store="amazon")
+        assert result is None
+        assert block is None

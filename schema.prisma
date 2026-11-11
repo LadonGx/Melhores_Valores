@@ -20,6 +20,13 @@ model Product {
   updatedAt DateTime           @updatedAt
   history   PriceHistory[]
   groups    ProductGroupItem[]
+
+  // Última checagem de verdade (scraping novo, não cache). O histórico de preços é
+  // deduplicado, então não serve para saber quando o produto foi verificado.
+  lastCheckedAt   DateTime? // última checagem bem-sucedida (ok, out_of_stock ou no_offer)
+  lastAttemptAt   DateTime? // última tentativa, com qualquer resultado
+  lastCheckStatus String? // ok | out_of_stock | no_offer | error | blocked
+  lastCheckError  String? // motivo curto, só quando error/blocked
 }
 
 model PriceHistory {

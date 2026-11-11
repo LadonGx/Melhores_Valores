@@ -58,9 +58,13 @@ class SearchRequest(BaseModel):
     max_price: float | None = None
 
 
+def _iso(value) -> str | None:
+    return value.isoformat() if value else None
+
+
 @app.get("/products")
 async def list_products():
-    """Retorna todos os produtos com o preço mais recente."""
+    """Retorna todos os produtos com o preço mais recente e o estado da última verificação."""
     products = get_all_products()
     result = []
     for p in products:
@@ -74,7 +78,12 @@ async def list_products():
             "current_price": latest.price if latest else None,
             "in_stock": latest.inStock if latest else None,
             "status": p.status,
-            "last_checked": latest.scrapedAt.isoformat() if latest and latest.scrapedAt else None,
+            # O histórico é deduplicado (não grava quando nada mudou), então a verificação
+            # real vem de lastCheckedAt; o histórico só cobre produtos de antes da coluna.
+            "last_checked": _iso(p.lastCheckedAt) or (_iso(latest.scrapedAt) if latest else None),
+            "last_attempt_at": _iso(p.lastAttemptAt),
+            "last_check_status": p.lastCheckStatus,
+            "last_check_error": p.lastCheckError,
             "created_at": p.createdAt.isoformat() if p.createdAt else None,
             "updated_at": p.updatedAt.isoformat() if p.updatedAt else None,
         })
@@ -268,6 +277,13 @@ async def refresh_product_price(product_id: str):
             "status": "out_of_stock",
             "in_stock": False,
             "detail": "Produto confirmado fora de estoque pelo site.",
+        }
+
+    if result.get("status") == "no_offer":
+        return {
+            "status": "error",
+            "reason": "no_offer",
+            "detail": "O anúncio está sem oferta principal no momento (só outros vendedores, sem preço exibido).",
         }
 
     # Interpreta o motivo do erro para retornar mensagem amigável

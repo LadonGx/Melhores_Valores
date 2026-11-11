@@ -53,11 +53,15 @@ def _log_cascade_result(level: int, store: str, result: dict | None, url: str) -
 
 
 def _result_is_acceptable(result: dict | None) -> bool:
-    """True if the result has a valid price, or explicitly confirms out-of-stock."""
+    """True if the result has a valid price, or explicitly confirms out-of-stock / no offer."""
     if not result:
         return False
     # Confirmed out-of-stock: stop the cascade so we don't burn Firecrawl credits
     if result.get("in_stock") is False and result.get("confidence_score", 0.0) >= _CONFIDENCE_ACCEPT:
+        return True
+    # Page read correctly but the listing has no offer (only other sellers, no price shown):
+    # escalating to a paid level would see the same page
+    if result.get("offer_type") == "none" and result.get("confidence_score", 0.0) >= _CONFIDENCE_ACCEPT:
         return True
     if result.get("price") is None:
         return False
@@ -69,8 +73,14 @@ def _result_is_acceptable(result: dict | None) -> bool:
 _NO_FIRECRAWL_BLOCKS = {"login_wall", "access_denied"}
 
 
-def scrape_product(url: str, store: str = None) -> dict | None:
-    """Cascata de scraping (ver _scrape_cascade) + registro da saúde da loja (canal "monitor")."""
+def scrape_product_with_block(url: str, store: str = None) -> tuple[dict | None, str | None]:
+    """
+    Cascata de scraping (ver _scrape_cascade) + registro da saúde da loja (canal "monitor").
+
+    Returns:
+        (resultado, categoria de bloqueio): a categoria só vem preenchida quando a cascata
+        falhou (resultado None) e um adapter identificou o bloqueio.
+    """
     if not store:
         store = detect_store(url)
 
@@ -79,7 +89,12 @@ def scrape_product(url: str, store: str = None) -> dict | None:
         record_ok(store, "monitor")
     else:
         record_failure(store, "monitor", block_category)
-    return result
+    return result, block_category
+
+
+def scrape_product(url: str, store: str = None) -> dict | None:
+    """Como scrape_product_with_block, mas devolve só o resultado."""
+    return scrape_product_with_block(url, store)[0]
 
 
 def _scrape_cascade(url: str, store: str) -> tuple[dict | None, str | None]:
