@@ -106,6 +106,8 @@
 .price { font-size: 14px; font-weight: 700; color: var(--color-text); font-variant-numeric: tabular-nums; }
 .noPrice { color: var(--color-text-faint); font-weight: 400; }
 .outOfStock { font-size: 10px; font-weight: 600; color: var(--color-danger); }
+/* Preço atual vendido por terceiros (Amazon esgotada ou terceiro na caixa de compra) */
+.sellerBadge { font-size: 10px; font-weight: 600; color: var(--color-warning); }
 .noName { color: var(--color-text-muted); font-style: italic; }
 
 /* ─── Row actions ─────────────────────────────────────────────────────── */

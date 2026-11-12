@@ -395,6 +395,17 @@
   white-space: nowrap;
 }
 
+/* Preço atual vendido por terceiros (Amazon esgotada ou terceiro na caixa de compra) */
+.sellerBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  padding: 2px 6px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
 .lowestBadge {
   font-size: 12px;
   font-weight: 700;

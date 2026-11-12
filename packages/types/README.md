@@ -36,10 +36,17 @@ interface Product {
 
 type LastCheckStatus = 'ok' | 'out_of_stock' | 'no_offer' | 'error' | 'blocked'
 
+// Quem vendia a oferta lida (Product.seller_type/seller_name = vendedor do preço atual).
+// Preços de terceiros ficam no histórico, mas fora de menor/média/mediana/promoções
+// enquanto houver preço da própria loja (PriceStats.third_party_excluded avisa).
+type SellerType = 'amazon' | 'third_party' | 'third_party_from'
+
 interface PriceHistoryEntry {
   id: string
   price: number | null   // null = out of stock
   inStock: boolean
+  sellerType?: SellerType | null   // null = não identificado (antigos, Mercado Livre)
+  sellerName?: string | null       // só third_party
   scrapedAt: string
 }
 

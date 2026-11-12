@@ -12,6 +12,7 @@ import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
 import { describeLastCheck } from '@/features/products/formatLastChecked';
+import { describeSeller, sellerBadge } from '@/features/products/seller';
 import {
   useProducts,
   useRefreshPrice,
@@ -273,6 +274,14 @@ export function Products() {
             {r.current_price != null ? formatCurrency(r.current_price) : <span className={styles.noPrice}>—</span>}
           </div>
           {r.in_stock === false && <span className={styles.outOfStock}>Sem estoque</span>}
+          {sellerBadge(r.seller_type) && (
+            <span
+              className={styles.sellerBadge}
+              title={describeSeller(r.seller_type, r.seller_name) ?? undefined}
+            >
+              {sellerBadge(r.seller_type)}
+            </span>
+          )}
         </div>
       ),
     },

@@ -192,6 +192,18 @@
   color: var(--color-danger);
 }
 
+/* Coluna "Vendedor" do histórico */
+.seller {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.thirdParty {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
 .date {
   font-size: 11px;
   color: var(--color-text-muted);

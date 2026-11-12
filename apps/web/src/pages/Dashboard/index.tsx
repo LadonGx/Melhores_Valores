@@ -12,6 +12,7 @@ import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
 import { describeLastCheck, lastAttemptAt, type LastCheckDisplay } from '@/features/products/formatLastChecked';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
+import { describeSeller, isThirdParty, sellerBadge } from '@/features/products/seller';
 import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
 import { usePromotions, useProducts, useRemoveProduct } from '@/features/products/hooks/useProducts';
@@ -200,8 +201,12 @@ function GroupRow({
 
         <div className={styles.productMeta}>
           {cheapest?.current_price != null && (
-            <span className={styles.lowestBadge}>
+            <span
+              className={styles.lowestBadge}
+              title={describeSeller(cheapest.seller_type, cheapest.seller_name) ?? undefined}
+            >
               {formatCurrency(cheapest.current_price)} · {formatStore(cheapest.store)}
+              {isThirdParty(cheapest.seller_type) ? ' · terceiro' : ''}
             </span>
           )}
           <span className={styles.detailHint}>Ver detalhes →</span>
@@ -321,6 +326,14 @@ function ProductRow({
         <div className={styles.productMeta}>
           {product.in_stock === false && (
             <span className={styles.unavailableBadge}>Indisponível</span>
+          )}
+          {sellerBadge(product.seller_type) && (
+            <span
+              className={styles.sellerBadge}
+              title={describeSeller(product.seller_type, product.seller_name) ?? undefined}
+            >
+              {sellerBadge(product.seller_type)}
+            </span>
           )}
           <span className={styles.storeBadge}>{formatStore(product.store)}</span>
           <span

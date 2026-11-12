@@ -1,7 +1,8 @@
 import {
   Area,
-  AreaChart,
   CartesianGrid,
+  ComposedChart,
+  Line,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -9,7 +10,37 @@ import {
 } from 'recharts';
 import type { HistoryRange, PriceChartPoint } from '@mv/types';
 import { formatCurrency, formatDate, formatShortDate } from '@mv/utils';
+import { describeSeller, isThirdParty } from '../seller';
 import styles from './PriceHistoryChart.module.css';
+
+/**
+ * Ponto do gráfico com o preço separado por série: `ownPrice` (vendido pela própria loja ou
+ * vendedor não identificado) e `thirdPartyPrice` (terceiros). Os preços de terceiros ficam no
+ * gráfico para mostrar o mercado, mas numa linha à parte.
+ */
+interface ChartRow extends PriceChartPoint {
+  ownPrice: number | null;
+  thirdPartyPrice: number | null;
+  /** Ponto da própria loja sem vizinhos da mesma série: precisa de marcador para aparecer. */
+  ownIsolated: boolean;
+}
+
+function toChartRows(points: PriceChartPoint[]): ChartRow[] {
+  const rows = points.map((p) => {
+    const thirdParty = isThirdParty(p.sellerType);
+    return {
+      ...p,
+      ownPrice: thirdParty ? null : p.price,
+      thirdPartyPrice: thirdParty ? p.price : null,
+      ownIsolated: false,
+    };
+  });
+  return rows.map((row, i) => ({
+    ...row,
+    ownIsolated:
+      row.ownPrice != null && rows[i - 1]?.ownPrice == null && rows[i + 1]?.ownPrice == null,
+  }));
+}
 
 const RANGE_OPTIONS: { value: HistoryRange; label: string }[] = [
   { value: '7d', label: '7 dias' },
@@ -26,18 +57,29 @@ const AXIS_PRICE_FORMATTER = new Intl.NumberFormat('pt-BR', {
 
 interface TooltipPayload {
   active?: boolean;
-  payload?: { payload: PriceChartPoint }[];
+  payload?: { payload: ChartRow }[];
 }
 
 function ChartTooltip({ active, payload }: TooltipPayload) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
+  const seller = point.price != null ? describeSeller(point.sellerType, point.sellerName) : null;
   return (
     <div className={styles.tooltip}>
       <span className={styles.tooltipDate}>{formatDate(point.scrapedAt)}</span>
       <span className={styles.tooltipValue}>
         {point.price != null ? formatCurrency(point.price) : 'Fora de estoque'}
       </span>
+      {seller && (
+        <span
+          className={[
+            styles.tooltipSeller,
+            isThirdParty(point.sellerType) ? styles.tooltipSellerThirdParty : '',
+          ].join(' ')}
+        >
+          {seller}
+        </span>
+      )}
     </div>
   );
 }
@@ -49,32 +91,56 @@ interface PriceHistoryChartProps {
   loading?: boolean;
 }
 
-interface LowestPriceDotProps {
+interface OwnPriceDotProps {
   cx?: number;
   cy?: number;
   index?: number;
-  payload?: PriceChartPoint;
+  payload?: ChartRow;
 }
 
 export function PriceHistoryChart({ points, range, onRangeChange, loading }: PriceHistoryChartProps) {
   const hasData = points.length > 0;
+  const rows = toChartRows(points);
+  const hasThirdParty = rows.some((row) => row.thirdPartyPrice != null);
 
-  const definedPrices = points
-    .map((p) => p.price)
+  // Menor preço marcado com a mesma regra das estatísticas: só a própria loja, a não ser que
+  // o período só tenha preços de terceiros.
+  const ownPrices = rows.map((r) => r.ownPrice).filter((price): price is number => price != null);
+  const thirdPartyPrices = rows
+    .map((r) => r.thirdPartyPrice)
     .filter((price): price is number => price != null);
-  const lowestPrice = definedPrices.length > 0 ? Math.min(...definedPrices) : null;
+  const lowestCandidates = ownPrices.length > 0 ? ownPrices : thirdPartyPrices;
+  const lowestPrice = lowestCandidates.length > 0 ? Math.min(...lowestCandidates) : null;
+  const lowestIsThirdParty = ownPrices.length === 0;
 
-  const renderDot = ({ cx, cy, index, payload }: LowestPriceDotProps) => {
-    const isLowest = lowestPrice != null && payload?.price === lowestPrice;
+  const renderOwnDot = ({ cx, cy, index, payload }: OwnPriceDotProps) => {
+    const isLowest = !lowestIsThirdParty && lowestPrice != null && payload?.ownPrice === lowestPrice;
+    const visible = isLowest || !!payload?.ownIsolated;
     return (
       <circle
         key={`price-dot-${index}`}
         cx={cx}
         cy={cy}
-        r={isLowest ? 4 : 0}
-        fill="var(--color-accent)"
+        r={isLowest ? 4 : visible ? 3 : 0}
+        fill={isLowest ? 'var(--color-accent)' : 'var(--color-primary-soft)'}
         stroke="var(--color-surface-2)"
-        strokeWidth={isLowest ? 2 : 0}
+        strokeWidth={visible ? 2 : 0}
+      />
+    );
+  };
+
+  const renderThirdPartyDot = ({ cx, cy, index, payload }: OwnPriceDotProps) => {
+    if (payload?.thirdPartyPrice == null) return <g key={`third-party-dot-${index}`} />;
+    const isLowest = lowestIsThirdParty && payload.thirdPartyPrice === lowestPrice;
+    return (
+      <circle
+        key={`third-party-dot-${index}`}
+        cx={cx}
+        cy={cy}
+        r={isLowest ? 4 : 3}
+        fill={isLowest ? 'var(--color-accent)' : 'var(--color-warning)'}
+        stroke="var(--color-surface-2)"
+        strokeWidth={2}
       />
     );
   };
@@ -101,7 +167,7 @@ export function PriceHistoryChart({ points, range, onRangeChange, loading }: Pri
       ) : (
         <div className={styles.chartBox}>
           <ResponsiveContainer width="100%" height={220}>
-            <AreaChart data={points} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid vertical={false} stroke="var(--color-border)" strokeDasharray="4 4" />
               <XAxis
                 dataKey="scrapedAt"
@@ -113,7 +179,6 @@ export function PriceHistoryChart({ points, range, onRangeChange, loading }: Pri
                 minTickGap={24}
               />
               <YAxis
-                dataKey="price"
                 stroke="var(--color-text-faint)"
                 fontSize={11}
                 tickLine={false}
@@ -128,18 +193,46 @@ export function PriceHistoryChart({ points, range, onRangeChange, loading }: Pri
               />
               <Area
                 type="monotone"
-                dataKey="price"
+                dataKey="ownPrice"
+                name="Amazon"
                 stroke="var(--color-primary-soft)"
                 strokeWidth={2}
                 fill="var(--color-primary-soft)"
                 fillOpacity={0.1}
                 connectNulls={false}
-                dot={renderDot}
+                dot={renderOwnDot}
                 activeDot={{ r: 5, fill: 'var(--color-primary-soft)', stroke: 'var(--color-surface-2)', strokeWidth: 2 }}
                 isAnimationActive={false}
               />
-            </AreaChart>
+              {hasThirdParty && (
+                <Line
+                  type="monotone"
+                  dataKey="thirdPartyPrice"
+                  name="Terceiros"
+                  stroke="var(--color-warning)"
+                  strokeWidth={2}
+                  strokeDasharray="5 4"
+                  connectNulls={false}
+                  dot={renderThirdPartyDot}
+                  activeDot={{ r: 5, fill: 'var(--color-warning)', stroke: 'var(--color-surface-2)', strokeWidth: 2 }}
+                  isAnimationActive={false}
+                />
+              )}
+            </ComposedChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {!loading && hasThirdParty && (
+        <div className={styles.legend}>
+          <span className={styles.legendItem}>
+            <span className={styles.legendOwn} />
+            Amazon
+          </span>
+          <span className={styles.legendItem}>
+            <span className={styles.legendThirdParty} />
+            Terceiros (Amazon esgotada ou outro vendedor)
+          </span>
         </div>
       )}
     </div>

@@ -45,6 +45,12 @@ export type ProductStatus = 'active' | 'paused';
 /** Resultado da última tentativa de verificação (GET /products). */
 export type LastCheckStatus = 'ok' | 'out_of_stock' | 'no_offer' | 'error' | 'blocked';
 
+/**
+ * Quem vendia a oferta de uma leitura de preço: a própria Amazon, um terceiro na caixa de
+ * compra, ou terceiros "a partir de" (sem caixa de compra). Nulo = não identificado.
+ */
+export type SellerType = 'amazon' | 'third_party' | 'third_party_from';
+
 export interface Product {
   id: string;
   url: string;
@@ -55,6 +61,10 @@ export interface Product {
   // Incluídos apenas no GET /products (não no sub-objeto de GET /product/{id}/history)
   current_price?: number | null;
   in_stock?: boolean | null;
+  /** Vendedor do preço atual. */
+  seller_type?: SellerType | null;
+  /** Nome do vendedor terceiro, quando a página mostra. */
+  seller_name?: string | null;
   /** Última checagem BEM-SUCEDIDA (não cache). */
   last_checked?: string | null;
   /** Última tentativa, de qualquer resultado (exceto acerto de cache). */
@@ -70,6 +80,8 @@ export interface PriceHistoryEntry {
   id: string;
   price: number | null;
   inStock: boolean;
+  sellerType?: SellerType | null;
+  sellerName?: string | null;
   scrapedAt: string;
   productId: string;
 }
@@ -79,6 +91,8 @@ export interface PriceStats {
   lowest_price: number | null;
   average_price: number | null;
   median_price: number | null;
+  /** Há preços de terceiros no histórico que ficaram fora de menor/média/mediana. */
+  third_party_excluded?: boolean;
 }
 
 export interface GroupPriceStats {
@@ -90,6 +104,8 @@ export interface PriceChartPoint {
   scrapedAt: string;
   price: number | null;
   inStock: boolean;
+  sellerType?: SellerType | null;
+  sellerName?: string | null;
 }
 
 export type HistoryRange = '7d' | '30d' | '90d' | 'all';

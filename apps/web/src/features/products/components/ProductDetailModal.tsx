@@ -7,6 +7,12 @@ import {
   useProductHistorySummary,
   useProductHistoryTable,
 } from '@/features/products/hooks/useProducts';
+import {
+  describeSeller,
+  isThirdParty,
+  sellerBadge,
+  sellerColumnLabel,
+} from '@/features/products/seller';
 import { PriceHistoryChart } from './PriceHistoryChart';
 import { StockWarningBanner } from './StockWarningBanner';
 import type { HistoryRange, Product, ProductGroup } from '@mv/types';
@@ -86,6 +92,7 @@ function HistoryTable({ productId }: { productId: string }) {
           <tr>
             <th>Data da verificação</th>
             <th>Preço</th>
+            <th>Vendedor</th>
             <th>Em estoque</th>
           </tr>
         </thead>
@@ -95,6 +102,11 @@ function HistoryTable({ productId }: { productId: string }) {
               <td className={styles.date}>{formatDate(entry.scrapedAt)}</td>
               <td className={styles.price}>
                 {entry.price != null ? formatCurrency(entry.price) : '—'}
+              </td>
+              <td title={describeSeller(entry.sellerType, entry.sellerName) ?? undefined}>
+                <span className={isThirdParty(entry.sellerType) ? styles.thirdParty : styles.seller}>
+                  {entry.price != null ? sellerColumnLabel(entry.sellerType, entry.sellerName) : '—'}
+                </span>
               </td>
               <td>
                 <span className={entry.inStock ? styles.inStock : styles.outOfStock}>
@@ -126,6 +138,10 @@ function HistoryTable({ productId }: { productId: string }) {
 function SingleProductContent({ product }: { product: Product }) {
   const [range, setRange] = useState<HistoryRange>('30d');
   const { data, isLoading } = useProductHistorySummary(product.id, range);
+  const currentSeller = isThirdParty(product.seller_type)
+    ? (describeSeller(product.seller_type, product.seller_name) ?? undefined)
+    : undefined;
+  const statsSub = data?.stats.third_party_excluded ? 'sem preços de terceiros' : undefined;
 
   return (
     <div className={styles.body}>
@@ -141,14 +157,23 @@ function SingleProductContent({ product }: { product: Product }) {
       <StockWarningBanner product={product} />
       <StatCardsRow
         items={[
-          { label: 'Preço atual', value: fmtPrice(data?.stats.current_price, isLoading) },
+          {
+            label: 'Preço atual',
+            value: fmtPrice(data?.stats.current_price, isLoading),
+            sub: currentSeller,
+          },
           {
             label: 'Menor preço histórico',
             value: fmtPrice(data?.stats.lowest_price, isLoading),
             highlight: true,
+            sub: statsSub,
           },
-          { label: 'Preço médio', value: fmtPrice(data?.stats.average_price, isLoading) },
-          { label: 'Mediana', value: fmtPrice(data?.stats.median_price, isLoading) },
+          {
+            label: 'Preço médio',
+            value: fmtPrice(data?.stats.average_price, isLoading),
+            sub: statsSub,
+          },
+          { label: 'Mediana', value: fmtPrice(data?.stats.median_price, isLoading), sub: statsSub },
         ]}
       />
 
@@ -205,6 +230,14 @@ function ListingAccordion({
         )}
         {product.in_stock === false && (
           <span className={styles.unavailableBadge}>Indisponível</span>
+        )}
+        {sellerBadge(product.seller_type) && (
+          <span
+            className={styles.thirdParty}
+            title={describeSeller(product.seller_type, product.seller_name) ?? undefined}
+          >
+            {sellerBadge(product.seller_type)}
+          </span>
         )}
         <span
           className={[
@@ -310,7 +343,9 @@ function GroupContent({
             label: 'Menor preço hoje',
             value: cheapest?.current_price != null ? formatCurrency(cheapest.current_price) : '—',
             highlight: true,
-            sub: cheapest ? formatStore(cheapest.store) : undefined,
+            sub: cheapest
+              ? `${formatStore(cheapest.store)}${isThirdParty(cheapest.seller_type) ? ' · terceiro' : ''}`
+              : undefined,
           },
           { label: 'Menor preço histórico', value: fmtPrice(lowestHistorical, historyLoading) },
           { label: 'Mediana de preços', value: fmtPrice(medianPrice, historyLoading) },
