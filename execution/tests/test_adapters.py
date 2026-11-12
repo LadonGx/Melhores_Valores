@@ -339,6 +339,64 @@ class TestAmazonRealPages:
         assert result["offer_type"] == "main"
 
 
+class TestAmazonSeller:
+    """Quem vende a oferta lida: Amazon ou terceiro (o preço de terceiro é guardado, não descartado)."""
+
+    @pytest.mark.parametrize("asin", ["6525946328", "6525948150", "B0DKLNNYY4", "6501370515"])
+    def test_sold_by_amazon(self, asin):
+        result = _amazon_fixture(asin)
+        assert result["seller_type"] == "amazon"
+        assert result["seller_name"] is None
+
+    def test_third_party_in_buy_box_keeps_price_and_seller_name(self):
+        """B0FWQX18JQ: caixa de compra de um terceiro ("Vendido por JS Digital BR")."""
+        result = _amazon_fixture("B0FWQX18JQ")
+        assert result["price"] == 180.64
+        assert result["offer_type"] == "main"
+        assert result["seller_type"] == "third_party"
+        assert result["seller_name"] == "JS Digital BR"
+
+    def test_no_buy_box_is_third_party_from(self):
+        """6525954525: só "a partir de" de outros vendedores, sem nome."""
+        result = _amazon_fixture("6525954525")
+        assert result["seller_type"] == "third_party_from"
+        assert result["seller_name"] is None
+
+    def test_kindle_without_seller_block_is_amazon(self):
+        result = _amazon_fixture("B0FYGGWCHR")
+        assert result["seller_type"] == "amazon"
+
+    def test_legacy_merchant_info_third_party(self):
+        html = AMAZON_NORMAL.replace(
+            "</body>",
+            '<div id="merchant-info">Vendido por Sebo do Centro e entregue por Amazon.</div></body>',
+        )
+        result = amazon.extract_from_html(html)
+        assert result["seller_type"] == "third_party"
+        assert result["seller_name"] == "Sebo do Centro"
+
+    def test_legacy_merchant_info_amazon(self):
+        html = AMAZON_NORMAL.replace(
+            "</body>", '<div id="merchant-info">Vendido e entregue por Amazon.com.br.</div></body>'
+        )
+        assert amazon.extract_from_html(html)["seller_type"] == "amazon"
+
+    def test_store_name_containing_amazon_is_third_party(self):
+        html = AMAZON_NORMAL.replace(
+            "</body>",
+            '<div id="merchantInfoFeature_feature_div">'
+            '<span class="offer-display-feature-text-message">Amazonas Livros</span></div></body>',
+        )
+        result = amazon.extract_from_html(html)
+        assert result["seller_type"] == "third_party"
+        assert result["seller_name"] == "Amazonas Livros"
+
+    def test_no_seller_information_is_unknown(self):
+        result = amazon.extract_from_html(AMAZON_NORMAL)
+        assert result["seller_type"] is None
+        assert result["seller_name"] is None
+
+
 # ─── MercadoLivre Tests ───────────────────────────────────────────────────────
 
 class TestMercadoLivreAdapter:

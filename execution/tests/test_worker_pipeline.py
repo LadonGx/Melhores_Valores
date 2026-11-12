@@ -94,7 +94,30 @@ class TestSuccessfulScrape:
             assert result["status"] == "ok"
             assert result["price"] == 199.90
             assert result["in_stock"] is True
-            mock_history.assert_called_once_with(product_id="prod-1", price=199.90, in_stock=True)
+            mock_history.assert_called_once_with(
+                product_id="prod-1", price=199.90, in_stock=True, seller_type=None, seller_name=None
+            )
+
+    def test_scrape_success_saves_seller(self):
+        """Vendedor identificado pelo adapter vai para o histórico (terceiro não é descartado)."""
+        product = _make_product()
+        scrape_result = {
+            "price": 180.64, "name": "Produto", "image_url": None, "in_stock": True,
+            "confidence_score": 0.92, "offer_type": "main",
+            "seller_type": "third_party", "seller_name": "JS Digital BR",
+        }
+        with patch(MOCK_PATCHES["cache_get"], return_value=None), \
+             patch(MOCK_PATCHES["scrape"], return_value=(scrape_result, None)), \
+             patch(MOCK_PATCHES["get_or_create"], return_value=product), \
+             patch(MOCK_PATCHES["add_history"]) as mock_history, \
+             patch(MOCK_PATCHES["cache_set"]), \
+             patch(MOCK_PATCHES["last_price"], return_value=None), \
+             patch(MOCK_PATCHES["is_garbage"], return_value=False):
+            run_price_pipeline("https://amazon.com.br/dp/test", "amazon")
+            mock_history.assert_called_once_with(
+                product_id="prod-1", price=180.64, in_stock=True,
+                seller_type="third_party", seller_name="JS Digital BR",
+            )
 
     def test_scrape_success_updates_cache(self):
         product = _make_product()
@@ -265,11 +288,15 @@ class TestLastCheckMarking:
         result = {
             "price": 120.0, "name": "Produto", "in_stock": True,
             "confidence_score": 0.6, "offer_type": "third_party_from",
+            "seller_type": "third_party_from", "seller_name": None,
         }
         with _pipeline_patches((result, None)), patch(MOCK_PATCHES["add_history"]) as mock_history:
             payload = run_price_pipeline(URL, "amazon")
         assert payload["status"] == "ok"
-        mock_history.assert_called_once_with(product_id="prod-1", price=120.0, in_stock=True)
+        mock_history.assert_called_once_with(
+            product_id="prod-1", price=120.0, in_stock=True,
+            seller_type="third_party_from", seller_name=None,
+        )
         mark_checked.assert_called_once_with("prod-1", "ok")
 
     def test_out_of_stock_marks_out_of_stock(self, mark_checked):

@@ -81,7 +81,23 @@ New optional key `offer_type` in the returned dict (Mercado Livre never sets it)
 
 `none` is never used for a confirmed out-of-stock page (that keeps `in_stock: False` and no `offer_type`). A page
 without a price and without that positive "no main offer" sign (or without a product title) still returns `None`,
-so the cascade escalates as before — the price block may simply be missing from that HTML. Regression tests use real
+so the cascade escalates as before — the price block may simply be missing from that HTML.
+
+### Seller of the offer (`seller_type`, `seller_name`)
+
+When a price is found, `amazon.py` also says who sells that offer, read from the "Enviado / Vendido"
+block (`#merchantInfoFeature_feature_div`, or the older `#merchant-info`):
+
+| `seller_type` | When | `seller_name` |
+|---|---|---|
+| `amazon` | Seller is exactly "Amazon.com.br" (a store whose name only *contains* "amazon" is a third party), or a Kindle e-book without a seller block | `None` |
+| `third_party` | Another seller holds the buy box (e.g. Amazon ran out) | seller name |
+| `third_party_from` | `offer_type: "third_party_from"` — no buy box, only "a partir de" | `None` |
+| `None` | No seller information on the page | `None` |
+
+Third-party prices are **kept** in `PriceHistory` (`sellerType` / `sellerName`) because they show the market,
+but price stats, group stats and promotions ignore them while the listing has its own (Amazon / unknown) prices.
+A seller change with the same price is a new history row (deduplication compares the seller too). Regression tests use real
 pages in `execution/tests/fixtures/amazon/`. Old wrong history rows: `docs/revisao-precos-amazon.md`.
 
 ## What NOT to Change Without Confirmation

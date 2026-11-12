@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .db_client import (
-    ProductAlreadyGroupedError,
+    THIRD_PARTY_SELLER_TYPES, ProductAlreadyGroupedError,
     add_price_history, create_group, delete_group, delete_product, list_groups,
     remove_product_from_group, get_all_products, get_or_create_product,
     get_group_price_stats, get_latest_price_entry, get_price_history_chart,
@@ -77,6 +77,8 @@ async def list_products():
             "image_url": p.imageUrl,
             "current_price": latest.price if latest else None,
             "in_stock": latest.inStock if latest else None,
+            "seller_type": latest.sellerType if latest else None,
+            "seller_name": latest.sellerName if latest else None,
             "status": p.status,
             # O histórico é deduplicado (não grava quando nada mudou), então a verificação
             # real vem de lastCheckedAt; o histórico só cobre produtos de antes da coluna.
@@ -98,6 +100,9 @@ def _compute_promotions(products: list) -> list[dict]:
     scrapedAt desc) — produtos cuja checagem mais recente confirmou indisponibilidade
     (price=None, inStock=False) são descartados, para nunca anunciar como "promoção"
     um produto que está fora de estoque agora.
+
+    Preços de terceiros só entram se o anúncio nunca teve preço da própria loja (mesma regra
+    das estatísticas): a volta da Amazon depois de um terceiro mais caro não é promoção.
     """
     promotions = []
     for p in products:
@@ -107,7 +112,17 @@ def _compute_promotions(products: list) -> list[dict]:
         if latest.price is None or not latest.inStock:
             continue  # sem preço válido agora, ou confirmado fora de estoque
 
-        previous_prices = [h.price for h in p.history[1:] if h.price is not None]
+        has_own_price = any(
+            h.price is not None and h.sellerType not in THIRD_PARTY_SELLER_TYPES for h in p.history
+        )
+        if has_own_price and latest.sellerType in THIRD_PARTY_SELLER_TYPES:
+            continue  # preço atual é de terceiro; a referência é o preço da própria loja
+
+        previous_prices = [
+            h.price
+            for h in p.history[1:]
+            if h.price is not None and not (has_own_price and h.sellerType in THIRD_PARTY_SELLER_TYPES)
+        ]
         if not previous_prices:
             continue  # sem histórico anterior suficiente para comparar
 
@@ -409,7 +424,13 @@ async def get_product_history(
         "chart": {
             "range": range,
             "points": [
-                {"scrapedAt": p.scrapedAt, "price": p.price, "inStock": p.inStock}
+                {
+                    "scrapedAt": p.scrapedAt,
+                    "price": p.price,
+                    "inStock": p.inStock,
+                    "sellerType": p.sellerType,
+                    "sellerName": p.sellerName,
+                }
                 for p in chart_points
             ],
         },
@@ -423,6 +444,8 @@ async def get_product_history(
                     "id": e.id,
                     "price": e.price,
                     "inStock": e.inStock,
+                    "sellerType": e.sellerType,
+                    "sellerName": e.sellerName,
                     "scrapedAt": e.scrapedAt,
                     "productId": e.productId,
                 }

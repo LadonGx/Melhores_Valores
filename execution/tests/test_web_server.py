@@ -12,10 +12,12 @@ from unittest.mock import MagicMock, patch
 from execution.web_server import _compute_promotions, list_products, refresh_product_price
 
 
-def _make_history_entry(price, in_stock=True):
+def _make_history_entry(price, in_stock=True, seller_type=None, seller_name=None):
     h = MagicMock()
     h.price = price
     h.inStock = in_stock
+    h.sellerType = seller_type
+    h.sellerName = seller_name
     return h
 
 
@@ -89,6 +91,42 @@ class TestComputePromotions:
         assert promotions[0]["previous_lowest_price"] == 180.0
 
 
+class TestComputePromotionsThirdParty:
+    """Preço de terceiro fica no histórico, mas não vira referência de promoção."""
+
+    def test_amazon_back_after_pricier_third_party_is_not_a_promotion(self):
+        product = _make_product(history=[
+            _make_history_entry(70.0, seller_type="amazon"),          # Amazon voltou
+            _make_history_entry(110.0, seller_type="third_party_from"),
+            _make_history_entry(70.0, seller_type="amazon"),
+        ])
+        assert _compute_promotions([product]) == []
+
+    def test_third_party_current_price_is_not_a_promotion_when_amazon_exists(self):
+        product = _make_product(history=[
+            _make_history_entry(60.0, seller_type="third_party", seller_name="Sebo X"),
+            _make_history_entry(70.0, seller_type="amazon"),
+        ])
+        assert _compute_promotions([product]) == []
+
+    def test_amazon_price_below_own_history_ignores_cheaper_third_party(self):
+        product = _make_product(history=[
+            _make_history_entry(65.0, seller_type="amazon"),
+            _make_history_entry(50.0, seller_type="third_party", seller_name="Sebo X"),
+            _make_history_entry(70.0),  # registro antigo, vendedor não identificado
+        ])
+        [promo] = _compute_promotions([product])
+        assert promo["previous_lowest_price"] == 70.0
+
+    def test_listing_only_ever_sold_by_third_parties_uses_their_prices(self):
+        product = _make_product(history=[
+            _make_history_entry(80.0, seller_type="third_party_from"),
+            _make_history_entry(95.0, seller_type="third_party_from"),
+        ])
+        [promo] = _compute_promotions([product])
+        assert promo["previous_lowest_price"] == 95.0
+
+
 # ─── GET /products: última verificação ────────────────────────────────────────
 
 def _make_listed_product(history=None, **last_check):
@@ -154,6 +192,14 @@ class TestListProductsLastCheck:
         assert item["last_attempt_at"] == "2026-11-11T12:00:00+00:00"
         assert item["last_check_status"] == "blocked"
         assert item["last_check_error"] == "captcha"
+
+    def test_exposes_seller_of_current_price(self):
+        entry = _history_entry_at(datetime(2026, 11, 11, 12, 0, tzinfo=timezone.utc), price=180.64)
+        entry.sellerType = "third_party"
+        entry.sellerName = "JS Digital BR"
+        [item] = _list_products([_make_listed_product(history=[entry])])
+        assert item["seller_type"] == "third_party"
+        assert item["seller_name"] == "JS Digital BR"
 
 
 # ─── POST /product/{id}/refresh ───────────────────────────────────────────────

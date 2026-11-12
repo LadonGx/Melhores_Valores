@@ -248,7 +248,13 @@ def _check_product(
 
     product = get_or_create_product(url=url, name=product_name, store=store, image_url=product_image)
     # A deduplicação pode não gravar nada; a checagem aconteceu de qualquer forma.
-    add_price_history(product_id=product.id, price=float(product_price), in_stock=in_stock)
+    add_price_history(
+        product_id=product.id,
+        price=float(product_price),
+        in_stock=in_stock,
+        seller_type=parsed_data.get("seller_type"),
+        seller_name=parsed_data.get("seller_name"),
+    )
     mark_product_checked(product.id, "ok")
 
     set_cached_price(

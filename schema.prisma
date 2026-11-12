@@ -34,6 +34,10 @@ model PriceHistory {
   price     Float?
   inStock   Boolean  @default(true)
   scrapedAt DateTime @default(now())
+  // Quem vendia a oferta lida: amazon | third_party | third_party_from ("a partir de", sem
+  // caixa de compra). Nulo = não identificado (registros antigos, Mercado Livre).
+  sellerType String?
+  sellerName String? // nome do vendedor, só para third_party
   productId String
   product   Product  @relation(fields: [productId], references: [id])
 

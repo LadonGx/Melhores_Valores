@@ -106,3 +106,34 @@ ROLLBACK;  -- troque por COMMIT; só depois de aprovar o resultado acima
 - **Fora de estoque:** linhas com `price` nulo (`inStock = false`) não são tocadas.
 - Depois de apagar, os próximos ciclos de checagem voltam a gravar o preço correto (84,71 no Kindle;
   para o 6525954525, o "a partir de" de R$ 78,90 ou nenhuma linha, se não houver oferta).
+
+### 3. (Opcional) Marcar como terceiros as leituras "a partir de" gravadas antes da coluna de vendedor
+
+A partir da migração `add_price_history_seller`, cada leitura grava quem vendia (`sellerType`).
+Leituras do 6525954525 feitas pela versão anterior (com o "a partir de" de R$ 78,90, mas ainda sem
+vendedor) ficam com `sellerType` nulo e entram nas estatísticas como se fossem da Amazon. Para
+corrigir só elas:
+
+```sql
+BEGIN;
+
+-- Conferir: devem ser só leituras de 78,90 a partir de 11/11/2026, sem vendedor
+SELECT "id", "price", "sellerType", "scrapedAt"
+FROM "PriceHistory"
+WHERE "productId" = '40c6ded9-bf0d-4bd0-84c3-00a3345dad4c'
+  AND "sellerType" IS NULL
+  AND "price" = 78.90
+  AND "scrapedAt" >= '2026-11-11';
+
+UPDATE "PriceHistory"
+SET "sellerType" = 'third_party_from'
+WHERE "productId" = '40c6ded9-bf0d-4bd0-84c3-00a3345dad4c'
+  AND "sellerType" IS NULL
+  AND "price" = 78.90
+  AND "scrapedAt" >= '2026-11-11';
+
+ROLLBACK;  -- troque por COMMIT; se o SELECT mostrou só as linhas esperadas
+```
+
+Leituras antigas de outros anúncios que já eram de terceiros na caixa de compra (ex.: B0FWQX18JQ,
+6525949394) não têm como ser identificadas depois do fato: continuam com vendedor nulo.

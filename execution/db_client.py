@@ -167,16 +167,24 @@ def mark_product_checked(product_id: str, status: str, error: str | None = None)
         return None
 
 
-def add_price_history(product_id: str, price: float | None, in_stock: bool = True) -> PriceHistory | None:
+def add_price_history(
+    product_id: str,
+    price: float | None,
+    in_stock: bool = True,
+    seller_type: str | None = None,
+    seller_name: str | None = None,
+) -> PriceHistory | None:
     """
     Registra uma nova entrada de preço para um produto específico, com deduplicação:
-    só insere se price/inStock mudaram desde o último registro, ou se ainda não existe
-    registro para o dia corrente (calendário de America/Sao_Paulo).
+    só insere se price/inStock/vendedor mudaram desde o último registro, ou se ainda não
+    existe registro para o dia corrente (calendário de America/Sao_Paulo).
 
     Args:
         product_id (str): ID único (CUID) do produto.
         price (float, optional): Valor numérico do preço capturado. None se esgotado.
         in_stock (bool): Se o produto está disponível para compra.
+        seller_type (str, optional): amazon | third_party | third_party_from; None = não identificado.
+        seller_name (str, optional): nome do vendedor terceiro, quando a página mostra.
 
     Returns:
         PriceHistory | None: O registro criado, ou None se a escrita foi deduplicada.
@@ -188,17 +196,27 @@ def add_price_history(product_id: str, price: float | None, in_stock: bool = Tru
             order={"scrapedAt": "desc"},
         )
         if last is not None:
-            changed = (last.price != price) or (last.inStock != in_stock)
+            changed = (
+                last.price != price
+                or last.inStock != in_stock
+                or last.sellerType != seller_type
+                or last.sellerName != seller_name
+            )
             same_day = _is_same_brt_day(last.scrapedAt, datetime.now(timezone.utc))
             if not changed and same_day:
                 logger.info(f"Dedup: preço inalterado para {product_id}, ignorando insert.")
                 return None
 
-        logger.info(f"Registrando preço {price} para produto_id: {product_id} (Estoque: {in_stock})")
+        logger.info(
+            f"Registrando preço {price} para produto_id: {product_id} "
+            f"(Estoque: {in_stock}, vendedor: {seller_type} {seller_name or ''})"
+        )
         return db.pricehistory.create(
             data={
                 "price": price,
                 "inStock": in_stock,
+                "sellerType": seller_type,
+                "sellerName": seller_name,
                 "productId": product_id
             }
         )
@@ -207,9 +225,34 @@ def add_price_history(product_id: str, price: float | None, in_stock: bool = Tru
         raise
 
 
+# Vendedores terceiros: o preço deles fica no histórico (mostra o mercado), mas não entra
+# em menor preço / média / mediana / promoções enquanto houver preço da própria loja.
+THIRD_PARTY_SELLER_TYPES = ("third_party", "third_party_from")
+
+
+def _stats_base_cte(where: str) -> str:
+    """
+    CTE `base` com os preços usados nas estatísticas: os da própria loja (vendedor amazon ou
+    não identificado); se não houver nenhum, todos os preços (anúncio só de terceiros).
+    """
+    third_party = ", ".join(f"'{t}'" for t in THIRD_PARTY_SELLER_TYPES)
+    return f'''WITH priced AS (
+                   SELECT price, "sellerType" FROM "PriceHistory"
+                   WHERE {where} AND price IS NOT NULL
+               ), own AS (
+                   SELECT price FROM priced
+                   WHERE "sellerType" IS NULL OR "sellerType" NOT IN ({third_party})
+               ), base AS (
+                   SELECT price FROM own
+                   UNION ALL
+                   SELECT price FROM priced WHERE NOT EXISTS (SELECT 1 FROM own)
+               )'''
+
+
 def get_price_stats(product_id: str) -> dict:
     """
     Calcula estatísticas de preço agregadas no banco (não em Python).
+    Preços de terceiros ficam de fora enquanto houver preço da própria loja (ver _stats_base_cte).
 
     Returns:
         dict: current_price, lowest_price, average_price, median_price.
@@ -223,12 +266,14 @@ def get_price_stats(product_id: str) -> dict:
         # prisma-client-py (v0.11) não expõe .aggregate() como método de conveniência,
         # então min/média/mediana são calculados numa única query raw no Postgres.
         rows = db.query_raw(
-            '''SELECT
+            _stats_base_cte('"productId" = $1')
+            + '''
+               SELECT
                    MIN(price) AS lowest,
                    AVG(price) AS average,
-                   percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS median
-               FROM "PriceHistory"
-               WHERE "productId" = $1 AND price IS NOT NULL''',
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS median,
+                   (SELECT COUNT(*) FROM priced) - COUNT(*) AS excluded
+               FROM base''',
             product_id,
         )
         row = rows[0] if rows else {}
@@ -238,6 +283,8 @@ def get_price_stats(product_id: str) -> dict:
             "lowest_price": float(row["lowest"]) if row.get("lowest") is not None else None,
             "average_price": round(float(row["average"]), 2) if row.get("average") is not None else None,
             "median_price": round(float(row["median"]), 2) if row.get("median") is not None else None,
+            # Há preços de terceiros no histórico que ficaram fora das estatísticas
+            "third_party_excluded": bool(row.get("excluded")),
         }
     except Exception as e:
         logger.error(f"Erro ao calcular estatísticas de preço para {product_id}: {e}")
@@ -260,11 +307,12 @@ def get_group_price_stats(product_ids: list[str]) -> dict:
     try:
         placeholders = ", ".join(f"${i + 1}" for i in range(len(product_ids)))
         rows = db.query_raw(
-            f'''SELECT
+            _stats_base_cte(f'"productId" IN ({placeholders})')
+            + '''
+                SELECT
                     MIN(price) AS lowest,
                     percentile_cont(0.5) WITHIN GROUP (ORDER BY price) AS median
-                FROM "PriceHistory"
-                WHERE "productId" IN ({placeholders}) AND price IS NOT NULL''',
+                FROM base''',
             *product_ids,
         )
         row = rows[0] if rows else {}

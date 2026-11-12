@@ -210,6 +210,56 @@ def _extract_price_from_soup(soup) -> tuple[float | None, str, float, str]:
     return None, "", 0.0, "none"
 
 
+# Names the page uses when the offer is sold by Amazon itself (compared lowercased, exact match:
+# a third-party store whose name merely contains "amazon" must not count as Amazon).
+_AMAZON_SELLER_NAMES = {"amazon.com.br", "amazon", "amazon.com"}
+
+
+def _extract_seller(soup, offer_type: str) -> tuple[str | None, str | None]:
+    """
+    Who sells the offer whose price was extracted: (seller_type, seller_name).
+
+    - "third_party_from" offer → ("third_party_from", None): only other sellers, no name shown;
+    - "Enviado / Vendido Amazon.com.br" → ("amazon", None);
+    - another seller in the buy box → ("third_party", "<seller name>");
+    - Kindle e-book (no seller block, Kindle format selected) → ("amazon", None);
+    - no information → (None, None).
+    """
+    if offer_type == "third_party_from":
+        return "third_party_from", None
+    if offer_type != "main":
+        return None, None
+
+    name = None
+    seller_el = soup.select_one(
+        "#merchantInfoFeature_feature_div #sellerProfileTriggerId, "
+        "#merchantInfoFeature_feature_div .offer-display-feature-text-message"
+    )
+    if seller_el:
+        name = seller_el.get_text(" ", strip=True)
+    else:
+        # Older layout: "Vendido e entregue por Amazon.com.br" / "Vendido por X e entregue por Amazon"
+        legacy = soup.select_one("#merchant-info")
+        if legacy:
+            match = re.search(
+                r"vendido (?:e entregue )?por\s+(.+?)(?:\s+e\s+(?:entregue|enviado)\b|\.|$)",
+                legacy.get_text(" ", strip=True),
+                re.IGNORECASE,
+            )
+            if match:
+                name = match.group(1).strip()
+
+    if name:
+        if name.lower() in _AMAZON_SELLER_NAMES:
+            return "amazon", None
+        return "third_party", name
+
+    selected = soup.select_one("#tmmSwatches .a-button-selected")
+    if selected and selected.get_text(" ", strip=True).lower().startswith("kindle"):
+        return "amazon", None
+    return None, None
+
+
 def _is_out_of_stock(soup) -> bool:
     """Check availability section text; defaults to in-stock if element not found."""
     avail = soup.select_one("#availability span")
@@ -282,9 +332,11 @@ def extract_from_html(html: str) -> dict | None:
                 "offer_type": "none",
             }
 
+        seller_type, seller_name = _extract_seller(soup, offer_type)
+
         logger.debug(
-            "Amazon | price=%.2f selector=%s confidence=%.2f in_stock=%s offer_type=%s",
-            price, selector_used, confidence, in_stock, offer_type,
+            "Amazon | price=%.2f selector=%s confidence=%.2f in_stock=%s offer_type=%s seller=%s/%s",
+            price, selector_used, confidence, in_stock, offer_type, seller_type, seller_name,
         )
 
         return {
@@ -297,6 +349,8 @@ def extract_from_html(html: str) -> dict | None:
             "confidence_score": confidence,
             "block_category": None,
             "offer_type": offer_type,
+            "seller_type": seller_type,
+            "seller_name": seller_name,
         }
     except Exception:
         logger.exception("Amazon | erro inesperado ao extrair HTML")
