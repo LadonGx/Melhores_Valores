@@ -1,0 +1,31 @@
+# Contexto de build da imagem da API (Dockerfile da raiz). O BuildKit usa este arquivo no lugar
+# do .dockerignore da raiz (que continua valendo para o front: apps/web/Dockerfile).
+# Estilo allowlist: tudo fica de fora, só entra o que a produção lê em tempo de execução.
+*
+
+# Dependências Python
+!requirements.txt
+
+# Banco: schema (prisma generate / migrate deploy) e migrações (prisma migrate deploy)
+!schema.prisma
+!migrations/
+
+# Código da aplicação (API, worker, Beat)
+!execution/
+
+# Dentro de execution/ não vai testes, documentação nem lixo do Python
+execution/tests
+execution/**/README.md
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.pytest_cache
+
+# Reforço: nunca entram, mesmo que alguém acrescente um "!" largo acima
+**/.env
+**/.env.*
+**/backup-*.sql
+**/*.dump
+**/*.patch
+**/.browser-profile
+**/.git

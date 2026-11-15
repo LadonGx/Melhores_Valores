@@ -1,6 +1,12 @@
 .git
 .github
 .env
+.env.*
+!.env.example
+# Segredos e dumps: nunca vão para nenhuma imagem
+backup-*.sql
+*.dump
+*.patch
 **/node_modules
 **/dist
 **/__pycache__
