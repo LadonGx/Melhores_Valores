@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .db_client import (
-    THIRD_PARTY_SELLER_TYPES, ProductAlreadyGroupedError,
-    add_price_history, create_group, delete_group, delete_product, list_groups,
+    SUCCESSFUL_CHECK_STATUSES, THIRD_PARTY_SELLER_TYPES, ProductAlreadyGroupedError,
+    add_price_history, add_products_to_group, create_group, get_check_attempt_counts, delete_group, delete_product, list_groups,
     remove_product_from_group, get_all_products, get_or_create_product,
     get_group_price_stats, get_latest_price_entry, get_price_history_chart,
     get_price_history_page, get_price_stats,
@@ -17,6 +17,7 @@ from .db_client import (
 )
 from .search_status import get_search_warnings
 from .store_detection import detect_store_from_url
+from .store_lock import StoreBusyError
 from .worker_tasks import process_price_check, run_price_pipeline, task_search_products
 
 
@@ -79,6 +80,7 @@ async def list_products():
             "in_stock": latest.inStock if latest else None,
             "seller_type": latest.sellerType if latest else None,
             "seller_name": latest.sellerName if latest else None,
+            "format": p.format,
             "status": p.status,
             # O histórico é deduplicado (não grava quando nada mudou), então a verificação
             # real vem de lastCheckedAt; o histórico só cobre produtos de antes da coluna.
@@ -162,6 +164,91 @@ async def stores_health():
     return {"stores": get_stores_health()}
 
 
+_CHECK_TRIGGERS = ("scheduled", "manual", "added")
+
+
+def _rate(successes: int, total: int) -> float | None:
+    return round(successes / total, 4) if total else None
+
+
+def _build_store_stats(rows: list[dict], labels: dict[str, str]) -> list[dict]:
+    """
+    Agrega as contagens de CheckAttempt (loja × status × motivo × origem × hora) no
+    formato de GET /stores/stats. Sempre lista as lojas conhecidas, mesmo zeradas.
+    """
+    stores: dict[str, dict] = {}
+
+    def entry(store: str) -> dict:
+        if store not in stores:
+            stores[store] = {
+                "store": store,
+                "label": labels.get(store, store),
+                "total": 0,
+                "successes": 0,
+                "by_status": {},
+                "by_block_category": {},
+                "by_trigger": {},
+                "_hours": [[0, 0] for _ in range(24)],
+            }
+        return stores[store]
+
+    for store in labels:
+        entry(store)
+    for row in rows:
+        s = entry(row["store"])
+        n = row["count"]
+        ok = row["status"] in SUCCESSFUL_CHECK_STATUSES
+        s["total"] += n
+        s["successes"] += n if ok else 0
+        s["by_status"][row["status"]] = s["by_status"].get(row["status"], 0) + n
+        if row.get("block_category"):
+            cat = row["block_category"]
+            s["by_block_category"][cat] = s["by_block_category"].get(cat, 0) + n
+        if row.get("trigger"):
+            s["by_trigger"][row["trigger"]] = s["by_trigger"].get(row["trigger"], 0) + n
+        hour = s["_hours"][row["hour"] % 24]
+        hour[0] += n
+        hour[1] += n if ok else 0
+
+    result = []
+    for s in stores.values():
+        hours = s.pop("_hours")
+        s["success_rate"] = _rate(s["successes"], s["total"])
+        s["by_hour"] = [
+            {"hour": h, "total": t, "successes": ok, "success_rate": _rate(ok, t)}
+            for h, (t, ok) in enumerate(hours)
+        ]
+        result.append(s)
+    return result
+
+
+@app.get("/stores/stats")
+async def stores_stats(
+    days: int = Query(7, ge=1, le=90),
+    trigger: Literal["scheduled", "manual", "added"] | None = None,
+):
+    """
+    Taxa de sucesso das checagens reais por loja nos últimos `days` dias: total, sucessos
+    (ok, out_of_stock, no_offer), contagem por status, por motivo de bloqueio, por origem
+    (scheduled = rodada automática, manual = botão "Atualizar preço", added = cadastro) e
+    por hora do dia em horário de Brasília. `trigger` filtra uma origem só.
+    Como ler: docs/medicao-mercado-livre.md.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from .store_health import STORES
+
+    rows = await asyncio.to_thread(get_check_attempt_counts, days, trigger)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    return {
+        "days": days,
+        "since": since.isoformat(),
+        "timezone": "America/Sao_Paulo",
+        "trigger": trigger,
+        "stores": _build_store_stats(rows, STORES),
+    }
+
+
 @app.get("/schedule/next-check")
 async def get_next_automatic_check():
     """
@@ -241,6 +328,26 @@ async def remove_group(group_id: str):
     return {"status": "ok", "deleted_id": group_id}
 
 
+class AddGroupProductsRequest(BaseModel):
+    product_ids: list[str]
+
+
+@app.post("/groups/{group_id}/products")
+async def add_group_products(group_id: str, req: AddGroupProductsRequest):
+    """
+    Adiciona anúncios a um grupo existente. Para trocar um anúncio do grupo sem desfazê-lo:
+    adicione o novo aqui e depois tire o antigo (DELETE /groups/{id}/products/{product_id}).
+    """
+    try:
+        return add_products_to_group(group_id, req.product_ids)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ProductAlreadyGroupedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 @app.delete("/groups/{group_id}/products/{product_id}")
 async def remove_group_product(group_id: str, product_id: str):
     """Tira um anúncio do grupo. Se sobrar só 1, o grupo é desfeito (group = null)."""
@@ -270,7 +377,14 @@ async def refresh_product_price(product_id: str):
             product.name,       # fallback_name = nome atual (não deixa perder)
             product.imageUrl,   # fallback_image
             True,               # skip_cache = True → força scraping fresco
+            trigger="manual",
         )
+    except StoreBusyError:
+        return {
+            "status": "error",
+            "reason": "busy",
+            "detail": "Outra verificação do Mercado Livre está em andamento. Tente de novo em instantes.",
+        }
     except Exception as exc:
         return {
             "status": "error",

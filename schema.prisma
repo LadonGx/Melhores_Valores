@@ -27,6 +27,30 @@ model Product {
   lastAttemptAt   DateTime? // última tentativa, com qualquer resultado
   lastCheckStatus String? // ok | out_of_stock | no_offer | error | blocked
   lastCheckError  String? // motivo curto, só quando error/blocked
+
+  // Formato do anúncio, lido pelo adapter a cada checagem bem-sucedida:
+  // ebook_kindle | physical | null (desconhecido ou não se aplica, ex.: eletrônicos)
+  format        String?
+  checkAttempts CheckAttempt[]
+}
+
+// Uma linha por checagem real (scraping novo; acerto de cache não conta), para medir a
+// taxa de sucesso por loja, por motivo de bloqueio e por hora (GET /stores/stats).
+model CheckAttempt {
+  id            String   @id @default(uuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store         String
+  status        String // ok | out_of_stock | no_offer | blocked | error
+  blockCategory String? // login_wall | captcha | access_denied | ... (status = blocked)
+  error         String? // scrape_failed | invalid_price | price_rejected | exception (status = error)
+  level         Int? // nível da cascata do resultado final: 1 httpx, 2 playwright, 3 firecrawl
+  durationMs    Int?
+  trigger       String   @default("scheduled") // scheduled | manual | added
+  createdAt     DateTime @default(now())
+
+  @@index([store, createdAt])
+  @@index([productId, createdAt])
 }
 
 model PriceHistory {

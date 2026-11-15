@@ -136,7 +136,8 @@ def update_product_status(product_id: str, status: str) -> Product | None:
         return None
 
 
-_SUCCESSFUL_CHECK_STATUSES = {"ok", "out_of_stock", "no_offer"}
+SUCCESSFUL_CHECK_STATUSES = ("ok", "out_of_stock", "no_offer")
+_SUCCESSFUL_CHECK_STATUSES = set(SUCCESSFUL_CHECK_STATUSES)
 
 
 def mark_product_checked(product_id: str, status: str, error: str | None = None) -> Product | None:
@@ -165,6 +166,93 @@ def mark_product_checked(product_id: str, status: str, error: str | None = None)
     except Exception as e:
         logger.error(f"Erro ao registrar checagem ({status}) do produto {product_id}: {e}")
         return None
+
+
+def record_check_attempt(
+    product_id: str,
+    store: str,
+    status: str,
+    *,
+    block_category: str | None = None,
+    error: str | None = None,
+    level: int | None = None,
+    duration_ms: int | None = None,
+    trigger: str = "scheduled",
+) -> None:
+    """
+    Grava uma linha em CheckAttempt para cada checagem real (acerto de cache não conta),
+    usada por GET /stores/stats para medir a taxa de sucesso por loja.
+
+    Nunca levanta exceção: a medição não pode derrubar a checagem.
+    """
+    data = {
+        "productId": product_id,
+        "store": store or "unknown",
+        "status": status,
+        "blockCategory": block_category,
+        "error": error,
+        "level": level,
+        "durationMs": int(duration_ms) if duration_ms is not None else None,
+        "trigger": trigger or "scheduled",
+    }
+    try:
+        connect_db()
+        db.checkattempt.create(data=data)
+    except Exception as e:
+        logger.error(f"Erro ao registrar tentativa de checagem ({status}) do produto {product_id}: {e}")
+
+
+_PRODUCT_FORMATS = {"ebook_kindle", "physical"}
+
+
+def set_product_format(product_id: str, product_format: str | None) -> None:
+    """
+    Grava Product.format (ebook_kindle | physical | None) lido na última checagem
+    bem-sucedida. Valor fora da lista vira None. Nunca levanta exceção.
+    """
+    value = product_format if product_format in _PRODUCT_FORMATS else None
+    try:
+        connect_db()
+        db.product.update(where={"id": product_id}, data={"format": value})
+    except Exception as e:
+        logger.error(f"Erro ao gravar o formato do produto {product_id}: {e}")
+
+
+def get_check_attempt_counts(days: int, trigger: str | None = None) -> list[dict]:
+    """
+    Contagem de CheckAttempt dos últimos `days` dias, agrupada por loja, status, motivo
+    do bloqueio, origem (trigger) e hora do dia em horário de Brasília.
+
+    Returns:
+        list[dict]: {store, status, block_category, trigger, hour, count}
+    """
+    connect_db()
+    sql = '''
+        SELECT "store",
+               "status",
+               "blockCategory" AS block_category,
+               "trigger",
+               EXTRACT(HOUR FROM ("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE 'America/Sao_Paulo')::int AS hour,
+               COUNT(*)::int AS count
+        FROM "CheckAttempt"
+        WHERE "createdAt" >= (NOW() AT TIME ZONE 'UTC') - make_interval(days => $1::int)'''
+    params: list = [int(days)]
+    if trigger:
+        sql += ' AND "trigger" = $2'
+        params.append(trigger)
+    sql += "\n        GROUP BY 1, 2, 3, 4, 5"
+    rows = db.query_raw(sql, *params)
+    return [
+        {
+            "store": r["store"],
+            "status": r["status"],
+            "block_category": r.get("block_category"),
+            "trigger": r.get("trigger"),
+            "hour": int(r["hour"]),
+            "count": int(r["count"]),
+        }
+        for r in rows
+    ]
 
 
 def add_price_history(
@@ -492,6 +580,43 @@ def create_group(name: str, product_ids: list[str]) -> dict:
         )
     except UniqueViolationError as e:
         # Outra requisição agrupou o mesmo anúncio entre a checagem e o create
+        raise ProductAlreadyGroupedError(_ALREADY_GROUPED_MSG) from e
+    return _serialize_group(group)
+
+
+def add_products_to_group(group_id: str, product_ids: list[str]) -> dict:
+    """
+    Adiciona anúncios a um grupo existente (ids repetidos, inexistentes ou que já estão
+    neste grupo são ignorados). Permite trocar um anúncio do grupo sem desfazê-lo:
+    adiciona o novo e depois tira o antigo.
+
+    Raises:
+        LookupError: o grupo não existe.
+        ValueError: nenhum dos ids é de um anúncio monitorado.
+        ProductAlreadyGroupedError: algum anúncio já pertence a outro grupo.
+    """
+    connect_db()
+    group = db.productgroup.find_unique(where={"id": group_id}, include={"items": True})
+    if group is None:
+        raise LookupError("Grupo não encontrado.")
+    unique_ids = list(dict.fromkeys(product_ids))
+    existing = {p.id for p in db.product.find_many(where={"id": {"in": unique_ids}})}
+    valid_ids = [pid for pid in unique_ids if pid in existing]
+    if not valid_ids:
+        raise ValueError("Nenhum dos anúncios informados está sendo monitorado.")
+    in_group = {item.productId for item in (group.items or [])}
+    new_ids = [pid for pid in valid_ids if pid not in in_group]
+    if not new_ids:
+        return _serialize_group(group)
+    if db.productgroupitem.find_many(where={"productId": {"in": new_ids}}):
+        raise ProductAlreadyGroupedError(_ALREADY_GROUPED_MSG)
+    try:
+        group = db.productgroup.update(
+            where={"id": group_id},
+            data={"items": {"create": [{"product": {"connect": {"id": pid}}} for pid in new_ids]}},
+            include={"items": True},
+        )
+    except UniqueViolationError as e:
         raise ProductAlreadyGroupedError(_ALREADY_GROUPED_MSG) from e
     return _serialize_group(group)
 

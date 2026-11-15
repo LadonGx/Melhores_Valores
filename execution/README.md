@@ -21,6 +21,7 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 | `scraping_orchestrator.py` | 3-level cascade logic | Changing scraping strategy |
 | `search_orchestrator.py` | Multi-store search | Changing search logic/relevance |
 | `cache_manager.py` | Redis get/set | Changing cache behavior |
+| `store_lock.py` | Global per-store Redis lock (Mercado Livre only) + `StoreBusyError` | Changing how concurrent checks of a store are serialized |
 | `store_detection.py` | URL → store string | Adding new store detection |
 | `firecrawl_api.py` | Paid API wrapper | Changing Firecrawl integration |
 
@@ -44,6 +45,7 @@ Houses the entire Python backend: FastAPI server, Celery workers, database clien
 DATABASE_URL  → PostgreSQL connection string
 REDIS_URL     → Redis connection string
 FIRECRAWL_API_KEY → Paid API key (Firecrawl)
+ML_SCHEDULE_MIN_INTERVAL_S / ML_SCHEDULE_MAX_INTERVAL_S / ML_SCHEDULE_MAX_WINDOW_S / ML_LOCK_TIMEOUT_S → optional (defaults 60 / 180 / 2700 / 300)
 ```
 
 ## Internal Dependencies
@@ -87,9 +89,19 @@ search_orchestrator.py
 
 | Task | Trigger | Description |
 |---|---|---|
-| `process_price_check(url)` | On demand + Beat | Cache check → cascade scrape → DB write |
-| `schedule_all_products()` | Every 6 hours (Beat) | Re-queues all monitored products |
+| `process_price_check(url, store, name?, image?, trigger="added")` | On demand + Beat | Cache check → cascade scrape → DB write. `bind=True`: retries itself when the Mercado Livre lock is busy |
+| `schedule_all_products()` | Every 6 hours (Beat) | Amazon: `.delay` at once. Mercado Livre: spaced out (see below). Returns `{scheduled_products, by_store, ml_window_s}` |
 | `task_search_products(query)` | On demand | Parallel search → filter → DB write |
+
+### Mercado Livre scheduling, lock and measurement
+
+Why: on 2026-11-11 a burst of 9 ML pages in ~1 min got 9/9 `login_wall`. Full guide: `docs/medicao-mercado-livre.md`.
+
+- **Spaced scheduling**: ML products are shuffled every round and sent with `apply_async(countdown=…)`; the gap between two checks is random in `[ML_SCHEDULE_MIN_INTERVAL_S, ML_SCHEDULE_MAX_INTERVAL_S]` (60–180 s); the first one leaves at countdown 0. Total window capped at `ML_SCHEDULE_MAX_WINDOW_S` (2700 s) — gaps are compressed proportionally if the sum exceeds it. `window + ML_LOCK_TIMEOUT_S` must stay below the broker `visibility_timeout` (3600 s, declared in `worker_tasks.py`; covered by a test).
+- **Global lock** (`store_lock.py`): the whole ML cascade runs under a Redis lock (`store_lock:mercadolivre`, expires in `ML_LOCK_TIMEOUT_S` = 300 s), so there are never 2 ML checks at once (worker × worker, worker × API button). Other stores skip it. `trigger="manual"` waits up to ~60 s; background checks wait up to 240 s and then `retry` in 60–180 s (max 3). `StoreBusyError` never marks the check or records an attempt (no real check happened). If Redis is down the check proceeds **without** the lock and logs a warning.
+- **Measurement**: every real check calls `mark_product_checked` **and** `record_check_attempt` (one `CheckAttempt` row: store, status, block category / error, cascade level, duration, trigger `scheduled|manual|added`). Cache hits record nothing. Read it via `GET /stores/stats?days=N&trigger=scheduled`.
+- **Format**: on a successful check, if the adapter result has a `"format"` key it is saved with `set_product_format` (Amazon only).
+- `scraping_orchestrator.scrape_product_with_meta()` returns `ScrapeOutcome(result, block_category, level, duration_ms)`; `scrape_product_with_block()` / `scrape_product()` keep their old return values.
 
 ## db_client.py — Function Reference
 
@@ -100,6 +112,8 @@ search_orchestrator.py
 | `update_product_name(id, name)` | Manual name override |
 | `add_price_history(product_id, price, inStock)` | Log price entry (deduped: skips insert if price/inStock unchanged since last entry on the same BRT calendar day) |
 | `mark_product_checked(product_id, status, error?)` | Records the outcome of a real check on `Product` (`lastCheckedAt`/`lastAttemptAt`/`lastCheckStatus`/`lastCheckError`); never raises. Success (`ok`, `out_of_stock`, `no_offer`) sets `lastCheckedAt`; failure (`error`, `blocked`) only sets `lastAttemptAt` + error. Cache hits don't call it |
+| `record_check_attempt(product_id, store, status, *, block_category?, error?, level?, duration_ms?, trigger)` | One `CheckAttempt` row per real check (cache hits excluded); never raises |
+| `set_product_format(product_id, format)` | Saves `Product.format` (`ebook_kindle` / `physical` / `None`); never raises |
 | `get_price_stats(id)` | current/lowest/average/median price, aggregated in DB |
 | `get_group_price_stats(ids)` | Real pooled lowest/median across multiple products' history |
 | `get_latest_price_entry(id)` | Most recent history row for a product |

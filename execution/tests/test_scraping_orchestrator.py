@@ -188,3 +188,135 @@ class TestScrapeProductWithBlock:
             result, block = scrape_product_with_block("https://amazon.com.br/dp/test", store="amazon")
         assert result is None
         assert block is None
+
+
+# ─── Nível da cascata, trava do ML e perfil do navegador ──────────────────────
+
+from execution.scraping_orchestrator import ScrapeOutcome, scrape_product_with_meta
+from execution.store_lock import StoreBusyError
+
+GOOD = {"price": 150.0, "confidence_score": 0.92, "in_stock": True}
+ML_URL = "https://mercadolivre.com.br/p/test"
+AMAZON_URL = "https://amazon.com.br/dp/test"
+
+
+class TestCascadeLevel:
+    def test_level1_success_reports_level_1(self):
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: GOOD}):
+            outcome = scrape_product_with_meta(AMAZON_URL, store="amazon")
+        assert isinstance(outcome, ScrapeOutcome)
+        assert (outcome.result, outcome.block_category, outcome.level) == (GOOD, None, 1)
+        assert outcome.duration_ms is not None and outcome.duration_ms >= 0
+
+    def test_playwright_success_reports_level_2(self):
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value=None), \
+             patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: GOOD}):
+            assert scrape_product_with_meta(AMAZON_URL, store="amazon").level == 2
+
+    def test_firecrawl_result_reports_level_3(self):
+        fc = {"data": {"metadata": {"price": 10.0}}}
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value=None), \
+             patch("execution.scraping_orchestrator.fetch_html_playwright", return_value=None), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: None}), \
+             patch("execution.scraping_orchestrator.scrape_product_data", return_value=fc):
+            outcome = scrape_product_with_meta(AMAZON_URL, store="amazon")
+        assert (outcome.result, outcome.level) == (fc, 3)
+
+    def test_failure_reports_last_level_tried(self):
+        login = {"price": None, "confidence_score": 0.0, "block_category": "login_wall", "in_stock": None}
+        with patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"mercadolivre": lambda html: login}):
+            outcome = scrape_product_with_meta(ML_URL, store="mercadolivre")
+        assert (outcome.result, outcome.block_category, outcome.level) == (None, "login_wall", 2)
+
+    def test_firecrawl_failure_reports_level_3(self):
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value=None), \
+             patch("execution.scraping_orchestrator.fetch_html_playwright", return_value=None), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: None}), \
+             patch("execution.scraping_orchestrator.scrape_product_data", return_value=None):
+            outcome = scrape_product_with_meta(AMAZON_URL, store="amazon")
+        assert (outcome.result, outcome.level) == (None, 3)
+
+    def test_unsupported_store_has_no_level(self):
+        outcome = scrape_product_with_meta("https://shopee.com.br/x", store="shopee")
+        assert (outcome.result, outcome.block_category, outcome.level) == (None, None, None)
+
+    def test_block_wrapper_is_unchanged(self):
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: GOOD}):
+            assert scrape_product_with_block(AMAZON_URL, store="amazon") == (GOOD, None)
+
+
+class TestMercadoLivreLock:
+    def test_whole_ml_cascade_runs_inside_the_lock(self, fake_store_lock_redis):
+        seen = {}
+
+        def adapter(html):
+            seen["held"] = list(fake_store_lock_redis.acquired)
+            seen["released"] = list(fake_store_lock_redis.released)
+            return GOOD
+
+        with patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"mercadolivre": adapter}):
+            scrape_product_with_block(ML_URL, store="mercadolivre")
+        assert seen["held"] == ["store_lock:mercadolivre"]
+        assert seen["released"] == []  # ainda segurando durante o parsing
+        assert fake_store_lock_redis.released == ["store_lock:mercadolivre"]
+
+    def test_lock_released_when_the_cascade_raises(self, fake_store_lock_redis):
+        with patch("execution.scraping_orchestrator.fetch_html_playwright", side_effect=RuntimeError("boom")), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"mercadolivre": lambda html: GOOD}):
+            with pytest.raises(RuntimeError):
+                scrape_product_with_block(ML_URL, store="mercadolivre")
+        assert fake_store_lock_redis.released == ["store_lock:mercadolivre"]
+
+    def test_amazon_does_not_use_the_lock(self, fake_store_lock_redis):
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: GOOD}):
+            scrape_product_with_block(AMAZON_URL, store="amazon")
+        assert fake_store_lock_redis.created == []
+
+    def test_wait_is_passed_to_the_lock(self, fake_store_lock_redis):
+        with patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"mercadolivre": lambda html: GOOD}):
+            scrape_product_with_block(ML_URL, store="mercadolivre", lock_wait_s=17)
+        assert fake_store_lock_redis.created[0]["blocking_timeout"] == 17.0
+
+    def test_busy_lock_raises_without_scraping_or_recording_health(
+        self, fake_store_lock_redis, fake_store_health_redis
+    ):
+        holding = fake_store_lock_redis.lock("store_lock:mercadolivre", timeout=300, blocking_timeout=1)
+        assert holding.acquire()
+        try:
+            with patch("execution.scraping_orchestrator.fetch_html_playwright") as mock_pw, \
+                 patch("execution.scraping_orchestrator.scrape_product_data") as mock_fc:
+                with pytest.raises(StoreBusyError):
+                    scrape_product_with_meta(ML_URL, store="mercadolivre", lock_wait_s=0.05)
+            mock_pw.assert_not_called()
+            mock_fc.assert_not_called()
+        finally:
+            holding.release()
+        assert fake_store_health_redis.data == {}  # nenhuma checagem aconteceu: saúde intacta
+
+    def test_health_is_recorded_for_real_checks(self, fake_store_health_redis):
+        with patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>"), \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"mercadolivre": lambda html: GOOD}):
+            scrape_product_with_block(ML_URL, store="mercadolivre")
+        assert "last_ok_at" in fake_store_health_redis.data["store_health:mercadolivre:monitor"]
+
+
+class TestBrowserProfile:
+    def test_ml_level2_uses_the_mercadolivre_profile(self):
+        with patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>") as mock_pw, \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"mercadolivre": lambda html: GOOD}):
+            scrape_product_with_block(ML_URL, store="mercadolivre")
+        mock_pw.assert_called_once_with(ML_URL, profile="mercadolivre")
+
+    def test_amazon_level2_keeps_the_disposable_context(self):
+        with patch("execution.scraping_orchestrator.fetch_html_simple", return_value=None), \
+             patch("execution.scraping_orchestrator.fetch_html_playwright", return_value="<html/>") as mock_pw, \
+             patch("execution.scraping_orchestrator.ADAPTERS", {"amazon": lambda html: GOOD}):
+            scrape_product_with_block(AMAZON_URL, store="amazon")
+        mock_pw.assert_called_once_with(AMAZON_URL)
