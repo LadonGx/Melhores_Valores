@@ -44,7 +44,8 @@ $cleanup = @($apiC, $workerC, $dbC, $redisC)
 
 function Remove-TestResources {
     foreach ($c in $cleanup) {
-        cmd /c "docker rm -f $c >NUL 2>&1"
+        # -v: apaga junto os volumes anonimos do postgres/redis (senao sobra ~46 MB por rodada)
+        cmd /c "docker rm -f -v $c >NUL 2>&1"
     }
     cmd /c "docker network rm $net >NUL 2>&1"
 }
