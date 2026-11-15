@@ -9,7 +9,9 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 libxrandr2 libgbm1 libasound2 \
     libpango-1.0-0 libcairo2 libdbus-1-3 libexpat1 \
     && rm -rf /var/lib/apt/lists/*
-RUN playwright install chromium
+# Só o Chromium completo (novo headless, channel="chromium"); o chromium-headless-shell
+# não é usado pelo scraper, então --no-shell mantém a imagem menor.
+RUN playwright install --no-shell chromium
 COPY . .
 RUN prisma generate
 EXPOSE 8000

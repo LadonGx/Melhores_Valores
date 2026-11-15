@@ -164,6 +164,30 @@ Copie o arquivo `.env.example` para `.env` e preencha os valores:
 cp .env.example .env
 ```
 
+#### Perfil persistente do navegador (Mercado Livre)
+
+As checagens do Mercado Livre reaproveitam um perfil de navegador (só cookies de visitante, sem login), para não parecer um visitante novo a cada visita. Variáveis opcionais:
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `BROWSER_PROFILE_DIR` | `<raiz do repo>/.browser-profile` (`/app/.browser-profile` no container) | Pasta onde ficam os perfis. Apagar a pasta recria o perfil do zero |
+| `BROWSER_PROFILE_MAX_MB` | `300` | Se o perfil passar desse tamanho, é apagado e recriado antes da próxima checagem |
+
+Sem volume, o perfil vive na camada gravável do container: sobrevive a reinícios, mas é perdido quando o container é recriado (atualização da imagem) — e a próxima checagem simplesmente recomeça como visitante novo. Para manter o perfil entre atualizações (ex.: compose do ZimaOS), monte um volume **diferente para cada serviço** — nunca o mesmo volume na API e no worker, porque dois Chromium não podem usar o mesmo perfil:
+
+```yaml
+services:
+  worker:
+    volumes:
+      - ml_profile_worker:/app/.browser-profile
+  api:
+    volumes:
+      - ml_profile_api:/app/.browser-profile
+volumes:
+  ml_profile_worker:
+  ml_profile_api:
+```
+
 ### Frontend (`apps/web/.env.example`)
 
 ```env

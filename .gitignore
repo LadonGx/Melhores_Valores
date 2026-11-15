@@ -24,6 +24,9 @@ celerybeat-schedule.dir
 debug_scrapers.py
 .agents/
 
+# Perfil persistente do navegador (cookies de visitante do Mercado Livre)
+.browser-profile/
+
 # Frontend
 apps/web/dist/
 apps/web/.env

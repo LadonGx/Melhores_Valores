@@ -13,5 +13,6 @@ venv
 .agents
 docs/screenshots
 conceitos
+.browser-profile
 celerybeat-schedule*
 debug_scrapers.py
