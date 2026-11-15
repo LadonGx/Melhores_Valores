@@ -6,6 +6,10 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# O `dpkg --purge` no fim tira os drivers de vídeo do Mesa e o compilador LLVM/Z3 que eles usam
+# (~195 MB): o libgbm1 os puxa, mas o Chromium sem tela desenha o WebGL com o SwiftShader embutido
+# e o container não tem GPU. O dpkg fica com a dependência do libgbm1 marcada como quebrada, então
+# qualquer `apt-get install` novo tem de vir ANTES dessa linha (depois dela o apt reclama).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libatomic1 openssl \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
@@ -18,7 +22,15 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 # Só o Chromium completo (novo headless, channel="chromium"); o chromium-headless-shell
 # não é usado pelo scraper, então --no-shell mantém a imagem menor.
-RUN playwright install --no-shell chromium
+# Traduções da interface do Chromium: só en-US e pt-BR ficam (o idioma das páginas vem do
+# locale="pt-BR" do contexto). O build falha se a pasta não existir/for ambígua ou faltar um dos 2.
+RUN playwright install --no-shell chromium \
+    && LOCALES="$(find "$PLAYWRIGHT_BROWSERS_PATH" -type d -name locales -path '*chrom*')" \
+    && test -n "$LOCALES" && test "$(echo "$LOCALES" | wc -l)" -eq 1 \
+    && echo "locales antes: $(du -sm "$LOCALES") MB, $(ls "$LOCALES" | wc -l) arquivos" \
+    && find "$LOCALES" -name '*.pak' ! -name en-US.pak ! -name pt-BR.pak -delete \
+    && test -f "$LOCALES/en-US.pak" && test -f "$LOCALES/pt-BR.pak" \
+    && echo "locales depois: $(du -sm "$LOCALES") MB, $(ls "$LOCALES" | wc -l) arquivos"
 COPY schema.prisma .
 # prisma generate baixa (uma vez, no build) o Node, o Prisma CLI e os engines. Depois sobra só o
 # que a produção usa: o node do próprio Playwright (versão fixa pelo requirements.txt) no lugar do
