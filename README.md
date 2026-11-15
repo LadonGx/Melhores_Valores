@@ -152,6 +152,8 @@ A cada push na `main`, o GitHub Actions publica duas imagens no GitHub Container
 
 O endereço da API dentro do container do front é configurável por `API_UPSTREAM` (padrão `http://api:8000`), e a porta do nginx por `NGINX_PORT` (padrão `80`).
 
+A imagem da API só leva o que a produção usa. O arquivo `Dockerfile.dockerignore` é uma lista do que entra: `execution/` sem os testes, `migrations/`, `schema.prisma` e `requirements.txt`. O BuildKit (Docker Desktop e o `buildx` do Actions) usa esse arquivo no lugar do `.dockerignore` da raiz, que continua valendo para o front. Arquivo novo que a API precise ler em produção tem que ser liberado ali. Tamanhos, medição e propostas não aplicadas estão em [`docs/otimizacao-imagem.md`](docs/otimizacao-imagem.md).
+
 ---
 
 ## 🔐 Variáveis de Ambiente
