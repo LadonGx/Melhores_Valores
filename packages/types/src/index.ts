@@ -51,6 +51,9 @@ export type LastCheckStatus = 'ok' | 'out_of_stock' | 'no_offer' | 'error' | 'bl
  */
 export type SellerType = 'amazon' | 'third_party' | 'third_party_from';
 
+/** Formato do anúncio (só a Amazon identifica hoje): eBook Kindle × edição física. */
+export type ProductFormat = 'ebook_kindle' | 'physical';
+
 export interface Product {
   id: string;
   url: string;
@@ -58,6 +61,8 @@ export interface Product {
   store: Store;
   image_url: string | null;
   status?: ProductStatus;
+  /** eBook Kindle ou edição física; null/ausente = desconhecido (eletrônicos etc.). */
+  format?: ProductFormat | null;
   // Incluídos apenas no GET /products (não no sub-objeto de GET /product/{id}/history)
   current_price?: number | null;
   in_stock?: boolean | null;

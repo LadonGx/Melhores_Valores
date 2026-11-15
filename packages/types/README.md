@@ -23,6 +23,8 @@ interface Product {
   currentPrice?: number | null
   inStock?: boolean
   scrapedAt?: string
+  // Formato do anúncio (ebook_kindle | physical | null).
+  format?: ProductFormat | null
   // Última verificação (GET /products):
   // last_checked = última checagem BEM-SUCEDIDA; last_attempt_at = última
   // tentativa de qualquer resultado. A tentativa FALHOU quando
@@ -40,6 +42,10 @@ type LastCheckStatus = 'ok' | 'out_of_stock' | 'no_offer' | 'error' | 'blocked'
 // Preços de terceiros ficam no histórico, mas fora de menor/média/mediana/promoções
 // enquanto houver preço da própria loja (PriceStats.third_party_excluded avisa).
 type SellerType = 'amazon' | 'third_party' | 'third_party_from'
+
+// Formato do anúncio (Product.format; só a Amazon identifica hoje).
+// null/ausente = desconhecido (eletrônicos etc.) — não conta como nenhum dos dois.
+type ProductFormat = 'ebook_kindle' | 'physical'
 
 interface PriceHistoryEntry {
   id: string

@@ -1,0 +1,10 @@
+/* Selo "Kindle" (eBook Kindle) — cor própria, discreta, no padrão dos outros selos. */
+.kindleBadge {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-primary-soft);
+  background: var(--color-primary-tint);
+  padding: 2px 6px;
+  border-radius: 99px;
+  white-space: nowrap;
+}

@@ -12,6 +12,8 @@ import { Toast } from '@/components/Toast';
 import { Tooltip } from '@/components/Tooltip';
 import { describeLastCheck, lastAttemptAt, type LastCheckDisplay } from '@/features/products/formatLastChecked';
 import { ProductDetailModal } from '@/features/products/components/ProductDetailModal';
+import { KindleBadge } from '@/features/products/components/KindleBadge';
+import { MixedFormatsWarning } from '@/features/products/components/MixedFormatsWarning';
 import { describeSeller, isThirdParty, sellerBadge } from '@/features/products/seller';
 import { PromotionsModal } from '@/features/products/components/PromotionsModal';
 import { useProductGroups } from '@/features/products/hooks/useProductGroups';
@@ -102,6 +104,8 @@ function GroupRow({
   const cheapest = sorted.find((p) => p.current_price != null);
   const thumb = groupProducts.find((p) => p.image_url)?.image_url;
   const affected = groupProducts.filter((p) => p.in_stock === false);
+  // Selo Kindle do grupo: um só, se algum anúncio do grupo for eBook Kindle.
+  const kindleListing = groupProducts.find((p) => p.format === 'ebook_kindle');
 
   // Linha de verificação do grupo: reflete a tentativa mais recente entre os
   // anúncios (falha recente aparece como falha; sucesso antigo pode ficar stale).
@@ -195,6 +199,7 @@ function GroupRow({
               </span>
             ))}
             <span className={styles.listingCount}>{groupProducts.length} anúncios</span>
+            {kindleListing && <KindleBadge product={kindleListing} />}
             {groupCheckLine}
           </div>
         </div>
@@ -327,6 +332,7 @@ function ProductRow({
           {product.in_stock === false && (
             <span className={styles.unavailableBadge}>Indisponível</span>
           )}
+          <KindleBadge product={product} />
           {sellerBadge(product.seller_type) && (
             <span
               className={styles.sellerBadge}
@@ -369,7 +375,8 @@ export function Dashboard() {
   const navigate = useNavigate();
   const { data, isLoading } = useProducts();
   const products = data?.products ?? [];
-  const { groups, createGroup, deleteGroup, ungroupProduct } = useProductGroups();
+  const { groups, createGroup, deleteGroup, ungroupProduct, addProductsToGroup } =
+    useProductGroups();
   const { mutateAsync: removeProduct, isPending: isDeleting } = useRemoveProduct();
   const { sortOption, hiddenIds, setSortOption, toggleHidden, showAll, reset: resetFilter } =
     useDashboardFilter();
@@ -448,6 +455,34 @@ export function Dashboard() {
     if (pendingGroupName.trim() && selectedProducts.length >= 2) {
       createGroup(pendingGroupName.trim(), selectedProducts.map((p) => p.id));
       clearSelection();
+    }
+  };
+
+  // Fluxo "adicionar ao grupo": exatamente 1 grupo + anúncios avulsos selecionados.
+  const addGroupTarget = selectedGroups.length === 1 ? selectedGroups[0] : null;
+  const addGroupCandidates =
+    addGroupTarget && selectedProducts.length > 0
+      ? selectedProducts
+      : null;
+  const addGroupProducts =
+    addGroupTarget
+      ? (addGroupTarget.productIds
+          .map((id) => products.find((p) => p.id === id))
+          .filter(Boolean) as Product[])
+      : [];
+
+  const handleAddToGroup = async () => {
+    if (!addGroupTarget || !addGroupCandidates) return;
+    try {
+      await addProductsToGroup(
+        addGroupTarget.id,
+        addGroupCandidates.map((p) => p.id),
+      );
+      setToast({ message: `Anúncios adicionados ao grupo "${addGroupTarget.name}".`, type: 'success' });
+      clearSelection();
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setToast({ message: detail ?? 'Erro ao adicionar ao grupo. Tente novamente.', type: 'error' });
     }
   };
 
@@ -675,9 +710,23 @@ export function Dashboard() {
             <Button size="sm" variant="ghost" onClick={() => setShowNameInput(false)}>
               Voltar
             </Button>
+            {selectedProducts.length >= 2 && (
+              <MixedFormatsWarning products={selectedProducts} />
+            )}
           </div>
         ) : (
           <>
+            {addGroupCandidates && (
+              <MixedFormatsWarning
+                products={[...addGroupProducts, ...addGroupCandidates]}
+              />
+            )}
+            {addGroupCandidates && (
+              <Button size="sm" variant="secondary" onClick={handleAddToGroup}>
+                <Icon name="layers" size={14} />
+                Adicionar ao grupo
+              </Button>
+            )}
             <Button
               size="sm"
               disabled={selectedGroups.length > 0 || selectedProducts.length < 2}

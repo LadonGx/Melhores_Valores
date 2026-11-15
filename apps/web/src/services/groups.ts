@@ -22,4 +22,12 @@ export const groupsService = {
     );
     return data.group;
   },
+
+  /** POST /groups/{id}/products — adiciona anúncios a um grupo existente (devolve o grupo atualizado). */
+  addProducts: async (groupId: string, productIds: string[]): Promise<ProductGroup> => {
+    const { data } = await api.post<ProductGroup>(`/groups/${groupId}/products`, {
+      product_ids: productIds,
+    });
+    return data;
+  },
 };

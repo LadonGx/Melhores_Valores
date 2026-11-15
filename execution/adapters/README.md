@@ -100,6 +100,34 @@ but price stats, group stats and promotions ignore them while the listing has it
 A seller change with the same price is a new history row (deduplication compares the seller too). Regression tests use real
 pages in `execution/tests/fixtures/amazon/`. Old wrong history rows: `docs/revisao-precos-amazon.md`.
 
+### Format of the listing (`format`)
+
+New key in every product dict returned by `extract_from_html` (including out-of-stock, `offer_type: "none"` and
+blocked pages, where it is `None`): `"format": "ebook_kindle" | "physical" | None`. The pipeline saves it with
+`db_client.set_product_format` on every successful check. It does not depend on there being a price, and reading it
+never changes price, `offer_type`, `seller_type` or confidence.
+
+| `format` | Means | Typical page |
+|---|---|---|
+| `"ebook_kindle"` | The listing is the eBook Kindle edition | "Formato: eBook Kindle", trail "Loja Kindle › eBooks Kindle", selected button "Kindle R$ …" |
+| `"physical"` | Physical edition (Capa comum/dura, Brochura) | "Formato: Capa comum/dura", selected button "Capa Comum R$ …" |
+| `None` | Unknown / not applicable | Electronics, consoles, no book signals at all |
+
+Sources, in order of trust — the first source that yields a format wins, so contradictions between sources are
+always settled by the strongest one (e.g. selected button "Capa Comum" beats a `<title>` that mentions eBooks Kindle):
+
+1. SELECTED button in `#tmmSwatches` (`.a-button-selected`) — the format actually on offer; its text starts with the
+   format name, so the standalone word "kindle" counts here;
+2. format line "Formato: …" in `#productSubtitle` or `#bylineInfo` (e.g. "Formato: Capa comum");
+3. store trail "Loja Kindle › eBooks Kindle" in `#wayfinding-breadcrumbs_feature_div` — Kindle only: the "Livros" trail
+   of physical books is not a signal;
+4. `<title>` (Kindle pages start with "Amazon.com.br eBooks Kindle: …").
+
+Within the same source, Kindle signals are checked before physical ones ("eBook Kindle" is more specific and never
+coexists with "Capa comum/dura" in a format line). Outside the selected button, only the full phrases
+"eBook Kindle"/"eBooks Kindle"/"Loja Kindle" identify Kindle — a physical book whose title merely mentions Kindle is
+not misread. Mercado Livre never returns the key.
+
 ## What NOT to Change Without Confirmation
 
 - Do not change the return dict keys (`name`, `price`, `image_url`) — used throughout the system

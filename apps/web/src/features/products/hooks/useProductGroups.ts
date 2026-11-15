@@ -115,6 +115,14 @@ export function useProductGroups() {
     onSettled: refetch,
   });
 
+  const addProductsMutation = useMutation({
+    mutationFn: ({ groupId, productIds }: { groupId: string; productIds: string[] }) =>
+      groupsService.addProducts(groupId, productIds),
+    onSuccess: (group) =>
+      setGroups((current) => current.map((g) => (g.id === group.id ? group : g))),
+    onSettled: refetch,
+  });
+
   const createGroup = useCallback(
     (name: string, productIds: string[]) => createMutation.mutate({ name: name.trim(), productIds }),
     [createMutation],
@@ -124,6 +132,12 @@ export function useProductGroups() {
     (groupId: string, productId: string) => ungroupMutation.mutate({ groupId, productId }),
     [ungroupMutation],
   );
+  /** Adiciona anúncios a um grupo existente; rejeita com o erro HTTP (404/409/422 têm `detail`). */
+  const addProductsToGroup = useCallback(
+    (groupId: string, productIds: string[]) =>
+      addProductsMutation.mutateAsync({ groupId, productIds }),
+    [addProductsMutation],
+  );
 
-  return { groups, createGroup, deleteGroup, ungroupProduct };
+  return { groups, createGroup, deleteGroup, ungroupProduct, addProductsToGroup };
 }

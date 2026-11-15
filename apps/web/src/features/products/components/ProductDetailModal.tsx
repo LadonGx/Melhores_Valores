@@ -13,6 +13,8 @@ import {
   sellerBadge,
   sellerColumnLabel,
 } from '@/features/products/seller';
+import { KindleBadge } from './KindleBadge';
+import { MixedFormatsWarning } from './MixedFormatsWarning';
 import { PriceHistoryChart } from './PriceHistoryChart';
 import { StockWarningBanner } from './StockWarningBanner';
 import type { HistoryRange, Product, ProductGroup } from '@mv/types';
@@ -214,6 +216,7 @@ function ListingAccordion({
     <div className={styles.accordionItem}>
       <div className={styles.accordionHeader} onClick={() => setOpen((v) => !v)}>
         <span className={styles.storeBadge}>{formatStore(product.store)}</span>
+        <KindleBadge product={product} />
         <span className={styles.accordionName}>{product.name ?? product.url}</span>
         {(product.in_stock === false || product.status === 'paused') && (
           <Tooltip
@@ -351,6 +354,9 @@ function GroupContent({
           { label: 'Mediana de preços', value: fmtPrice(medianPrice, historyLoading) },
         ]}
       />
+
+      {/* Aviso discreto quando o grupo já mistura eBook Kindle e edição física */}
+      <MixedFormatsWarning products={groupProducts} />
 
       {/* Per-listing accordion — each ListingAccordion calls useProductHistorySummary internally */}
       <div className={styles.section}>

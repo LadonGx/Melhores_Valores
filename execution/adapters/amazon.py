@@ -269,10 +269,74 @@ def _is_out_of_stock(soup) -> bool:
     return False
 
 
+# Format of the listing (eBook Kindle × physical edition).
+# Physical signals come from the format lines ("Formato: Capa comum/dura/Brochura")
+# and the selected format button; Kindle signals also cover the store trail and <title>.
+_KINDLE_FORMAT_SIGNALS = ("ebook kindle", "ebooks kindle", "loja kindle")
+_PHYSICAL_FORMAT_SIGNALS = ("capa comum", "capa dura", "brochura", "paperback", "hardcover")
+
+
+def _format_from_text(text: str, *, bare_kindle: bool = False) -> str | None:
+    """
+    Reads a format signal from a piece of page text.
+
+    - `bare_kindle=True` (selected format button) also matches the standalone word
+      "kindle", because the button text starts with the format name ("Kindle R$ 84,71 …").
+      In the other sources only "eBook Kindle"/"eBooks Kindle"/"Loja Kindle" count, so a
+      physical edition whose title merely mentions Kindle is not misread.
+    - Kindle is checked before physical within the same text: the signals never coexist
+      in a format line, and "eBook Kindle" is the more specific phrase.
+    """
+    low = text.lower()
+    if bare_kindle and "kindle" in low:
+        return "ebook_kindle"
+    if any(sig in low for sig in _KINDLE_FORMAT_SIGNALS):
+        return "ebook_kindle"
+    if any(sig in low for sig in _PHYSICAL_FORMAT_SIGNALS):
+        return "physical"
+    return None
+
+
+def _extract_format(soup) -> str | None:
+    """
+    Format of the listing: "ebook_kindle", "physical" or None (unknown — electronics etc.).
+
+    Sources, in order of trust (the first source that yields a format wins, so a
+    contradiction between sources is always settled by the strongest one):
+      1. SELECTED button in #tmmSwatches (the format actually on offer);
+      2. format line "Formato: …" in #productSubtitle or #bylineInfo;
+      3. store trail "Loja Kindle › eBooks Kindle" in #wayfinding-breadcrumbs_feature_div
+         (Kindle only — physical books have the "Livros" trail, which is not a signal);
+      4. <title> (Kindle pages say "Amazon.com.br eBooks Kindle: …").
+    """
+    tmm_selected = soup.select_one("#tmmSwatches .a-button-selected")
+    if tmm_selected:
+        fmt = _format_from_text(tmm_selected.get_text(" ", strip=True), bare_kindle=True)
+        if fmt:
+            return fmt
+
+    subtitle = soup.select_one("#productSubtitle") or soup.select_one("#bylineInfo")
+    if subtitle:
+        fmt = _format_from_text(subtitle.get_text(" ", strip=True))
+        if fmt:
+            return fmt
+
+    breadcrumbs = soup.select_one("#wayfinding-breadcrumbs_feature_div")
+    if breadcrumbs:
+        fmt = _format_from_text(breadcrumbs.get_text(" ", strip=True))
+        if fmt:
+            return fmt
+
+    if soup.title:
+        return _format_from_text(soup.title.get_text(strip=True))
+    return None
+
+
 def extract_from_html(html: str) -> dict | None:
     """
     Parses raw HTML from an Amazon product page.
-    Returns a dict with price, name, confidence_score, selector_used, block_category.
+    Returns a dict with price, name, confidence_score, selector_used, block_category,
+    and format ("ebook_kindle" | "physical" | None).
     Returns None on complete parse failure.
     """
     soup = BeautifulSoup(html, "lxml")
@@ -286,11 +350,13 @@ def extract_from_html(html: str) -> dict | None:
             "price": None, "name": None, "image_url": None,
             "confidence_score": 0.0, "selector_used": "",
             "block_category": block_category,
+            "format": None,
         }
 
     try:
         price, selector_used, confidence, offer_type = _extract_price_from_soup(soup)
         in_stock = not _is_out_of_stock(soup)
+        product_format = _extract_format(soup)
 
         title_el = soup.select_one("#productTitle")
         title = title_el.get_text(strip=True) if title_el else None
@@ -311,6 +377,7 @@ def extract_from_html(html: str) -> dict | None:
                     "selector_used": "",
                     "confidence_score": 0.75,
                     "block_category": None,
+                    "format": product_format,
                 }
             if not title or not soup.select_one(_NO_MAIN_OFFER_SIGNALS):
                 # No positive sign that the listing lacks a main offer (the price block may just
@@ -330,6 +397,7 @@ def extract_from_html(html: str) -> dict | None:
                 "confidence_score": 0.6,
                 "block_category": None,
                 "offer_type": "none",
+                "format": product_format,
             }
 
         seller_type, seller_name = _extract_seller(soup, offer_type)
@@ -351,6 +419,7 @@ def extract_from_html(html: str) -> dict | None:
             "offer_type": offer_type,
             "seller_type": seller_type,
             "seller_name": seller_name,
+            "format": product_format,
         }
     except Exception:
         logger.exception("Amazon | erro inesperado ao extrair HTML")

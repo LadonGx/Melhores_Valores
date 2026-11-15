@@ -397,6 +397,110 @@ class TestAmazonSeller:
         assert result["seller_name"] is None
 
 
+class TestAmazonFormat:
+    """Formato do anúncio (eBook Kindle × edição física), pela chave nova `format`."""
+
+    @pytest.mark.parametrize(
+        "asin, expected_format",
+        [
+            ("B0FYGGWCHR", "ebook_kindle"),  # "Formato: eBook Kindle" + trilha Loja Kindle
+            ("6525948150", "physical"),      # Capa comum
+            ("6525946328", "physical"),      # Capa comum
+            ("6525954525", "physical"),      # Capa comum ("a partir de")
+            ("6501370515", "physical"),      # Capa dura
+            ("B0DKLNNYY4", None),            # Echo Dot (eletrônico)
+            ("B0FWQX18JQ", None),            # Capa de console (eletrônico)
+        ],
+    )
+    def test_format_of_real_pages(self, asin, expected_format):
+        result = _amazon_fixture(asin)
+        assert result["format"] == expected_format
+
+    @pytest.mark.parametrize(
+        "asin, expected_price",
+        [
+            # Trava de regressão: o preço de CADA fixture existente não muda com o formato.
+            ("6501370515", 88.49),
+            ("6525946328", 67.45),
+            ("6525948150", 59.18),
+            ("6525954525", 78.90),
+            ("B0DKLNNYY4", 639.00),
+            ("B0FWQX18JQ", 180.64),
+            ("B0FYGGWCHR", 84.71),
+        ],
+    )
+    def test_format_detection_never_changes_the_price(self, asin, expected_price):
+        result = _amazon_fixture(asin)
+        assert result["price"] == expected_price
+
+    def test_format_is_present_on_every_product_dict(self):
+        """Todas as saídas de produto carregam a chave `format` — inclusive fora de estoque
+        e sem oferta principal; páginas bloqueadas também devolvem `format: None`."""
+        assert "format" in amazon.extract_from_html(AMAZON_OUT_OF_STOCK_NO_PRICE)
+        assert "format" in amazon.extract_from_html(AMAZON_CAROUSEL_ONLY_PRICE)
+        assert amazon.extract_from_html(AMAZON_CAPTCHA)["format"] is None
+
+    def test_selected_format_button_beats_other_signals(self):
+        """Regra de desempate: o botão selecionado no #tmmSwatches é a fonte mais forte.
+        Aqui ele diz "Capa Comum" e o <title> (fonte fraca) menciona eBooks Kindle."""
+        html = """
+        <html><head><title>Amazon.com.br eBooks Kindle: Livro Exemplo : Amazon.com.br</title></head>
+        <body>
+          <span id="productTitle">Livro Exemplo</span>
+          <div id="tmmSwatches">
+            <div class="a-button-selected">Capa Comum R$ 71,00</div>
+          </div>
+          <div id="corePrice_feature_div"><span class="a-price"><span class="a-offscreen">R$ 71,00</span></span></div>
+        </body></html>
+        """
+        result = amazon.extract_from_html(html)
+        assert result["format"] == "physical"
+
+    def test_format_line_beats_title(self):
+        """A linha "Formato:" (#bylineInfo) vence o <title>: capa comum, não Kindle."""
+        html = """
+        <html><head><title>Amazon.com.br eBooks Kindle: Livro Exemplo : Amazon.com.br</title></head>
+        <body>
+          <span id="productTitle">Livro Exemplo</span>
+          <div id="bylineInfo">por Alguém (Autor) Formato:Capa comum</div>
+          <div id="corePrice_feature_div"><span class="a-price"><span class="a-offscreen">R$ 71,00</span></span></div>
+        </body></html>
+        """
+        result = amazon.extract_from_html(html)
+        assert result["format"] == "physical"
+
+    def test_kindle_store_trail_without_button_or_format_line(self):
+        """Trilha "Loja Kindle › eBooks Kindle" identifica Kindle quando não há botão
+        selecionado nem linha de formato."""
+        html = """
+        <html><head><title>Livro Exemplo : Amazon.com.br</title></head>
+        <body>
+          <span id="productTitle">Livro Exemplo</span>
+          <div id="wayfinding-breadcrumbs_feature_div">
+            <a>Loja Kindle</a> › <a>eBooks Kindle</a> › <a>Fantasia</a>
+          </div>
+          <div id="corePrice_feature_div"><span class="a-price"><span class="a-offscreen">R$ 84,71</span></span></div>
+        </body></html>
+        """
+        result = amazon.extract_from_html(html)
+        assert result is not None
+        assert result["price"] == 84.71
+        assert result["format"] == "ebook_kindle"
+
+    def test_bare_kindle_word_only_counts_in_selected_button(self):
+        """A palavra "kindle" sozinha só vale no botão selecionado; no título de uma edição
+        física que menciona Kindle não identifica formato."""
+        html = """
+        <html><head><title>Livro que fala de Kindle : Amazon.com.br</title></head>
+        <body>
+          <span id="productTitle">Livro que fala de Kindle</span>
+          <div id="corePrice_feature_div"><span class="a-price"><span class="a-offscreen">R$ 71,00</span></span></div>
+        </body></html>
+        """
+        result = amazon.extract_from_html(html)
+        assert result["format"] is None
+
+
 # ─── MercadoLivre Tests ───────────────────────────────────────────────────────
 
 class TestMercadoLivreAdapter:

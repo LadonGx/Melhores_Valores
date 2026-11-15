@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createElement, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ProductGroup } from '@mv/types';
-import { migrateLegacyGroups } from './useProductGroups';
+import { migrateLegacyGroups, useProductGroups } from './useProductGroups';
 import { groupsService } from '@/services/groups';
 
 vi.mock('@/services/groups', () => ({
-  groupsService: { create: vi.fn() },
+  groupsService: { create: vi.fn(), getAll: vi.fn(), addProducts: vi.fn() },
 }));
 
 const KEY = 'mv_product_groups';
@@ -69,5 +72,72 @@ describe('migrateLegacyGroups', () => {
     await migrateLegacyGroups([]);
     expect(groupsService.create).toHaveBeenCalledTimes(3);
     expect(JSON.parse(localStorage.getItem(KEY) ?? '[]')).toEqual([offline, serverDown]);
+  });
+});
+
+describe('useProductGroups.addProductsToGroup', () => {
+  const existing: ProductGroup = {
+    id: 'g1',
+    name: 'Ritmo da Guerra',
+    productIds: ['p1', 'p2'],
+    createdAt: '2026-11-01T00:00:00.000Z',
+  };
+  const updated: ProductGroup = {
+    id: 'g1',
+    name: 'Ritmo da Guerra',
+    productIds: ['p1', 'p2', 'p3'],
+    createdAt: '2026-11-01T00:00:00.000Z',
+  };
+
+  function renderGroupsHook() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    const view = renderHook(() => useProductGroups(), { wrapper });
+    return { ...view, queryClient };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(groupsService.getAll).mockReset();
+    vi.mocked(groupsService.addProducts).mockReset();
+    vi.mocked(groupsService.create).mockReset();
+  });
+  afterEach(() => localStorage.clear());
+
+  it('adiciona anúncios a um grupo existente e substitui o grupo no cache', async () => {
+    vi.mocked(groupsService.getAll)
+      .mockResolvedValueOnce([existing]) // carga inicial
+      .mockResolvedValue([updated]); // refetch após a mutation
+    vi.mocked(groupsService.addProducts).mockResolvedValue(updated);
+    const { result, queryClient } = renderGroupsHook();
+    await waitFor(() => expect(result.current.groups).toEqual([existing]));
+
+    await act(() => result.current.addProductsToGroup('g1', ['p3']));
+
+    expect(groupsService.addProducts).toHaveBeenCalledWith('g1', ['p3']);
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['groups'])).toEqual([updated]),
+    );
+  });
+
+  it('rejeita com o erro do servidor (409: anúncio já está em outro grupo)', async () => {
+    vi.mocked(groupsService.getAll).mockResolvedValue([existing]);
+    vi.mocked(groupsService.addProducts).mockRejectedValueOnce(httpError(409));
+    const { result } = renderGroupsHook();
+    await waitFor(() => expect(result.current.groups).toEqual([existing]));
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await result.current.addProductsToGroup('g1', ['p3']);
+      } catch (error) {
+        caught = error;
+      }
+    });
+
+    expect((caught as { status?: number } | null)?.status).toBe(409);
   });
 });

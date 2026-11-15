@@ -11,6 +11,7 @@ import { SelectionBar } from '@/components/SelectionBar';
 import { Table, type Column } from '@/components/Table';
 import { Toast } from '@/components/Toast';
 import { AddProductForm } from '@/features/products/components/AddProductForm';
+import { KindleBadge } from '@/features/products/components/KindleBadge';
 import { describeLastCheck } from '@/features/products/formatLastChecked';
 import { describeSeller, sellerBadge } from '@/features/products/seller';
 import {
@@ -95,6 +96,7 @@ function NameCell({ product }: { product: Product }) {
         <span className={[styles.productName, hasGarbageName ? styles.noName : ''].join(' ')}>
           {product.name ?? <em>Sem nome</em>}
         </span>
+        <KindleBadge product={product} />
         <button className={styles.editNameBtn} onClick={startEdit} title="Editar nome">
           ✎
         </button>
