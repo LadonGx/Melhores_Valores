@@ -17,8 +17,18 @@ peso, o método de medição e os números de comparação entre as versões "an
 O contexto de build do CI só tem arquivos versionados; para reproduzir isso localmente:
 
 ```sh
-git archive origin/main | docker build --no-cache -t mv-api:antes -
+git archive origin/main -o main.tar
+tar -xf main.tar -C pasta-main
+docker build -t mv-api:antes pasta-main
 ```
+
+> **Importante — construir de uma PASTA, não por `git archive | docker build -`:** quando o
+> contexto chega como tarball pela entrada padrão, o BuildKit **não aplica o
+> `Dockerfile.dockerignore`** (ele só vale para contexto de pasta). Por tarball entram
+> arquivos que o CI exclui (ex.: `execution/tests`, 10 MB) e a imagem sai maior que a
+> publicada. O Actions usa `context: .` (pasta), onde o ignore é aplicado. A medição "antes"
+> da tarefa anterior (2,23 GB → 1,26 GB) **não foi afetada** por isso: o `Dockerfile` antigo
+> não tinha `Dockerfile.dockerignore` (não havia o que não aplicar).
 
 ### Tamanhos
 
@@ -513,9 +523,233 @@ Números medidos pelo BUILD (mesma máquina):
 - **(a') Aparar o Chromium completo (≈ −68 MB, não aplicado):** `locales/` 50 MB (manter só
   en-US e pt-BR → ≈ −47 MB) e `WidevineCdm` 21 MB (DRM, sem uso). Risco baixo, mas mexe
   dentro do bundle do Playwright (que se atualiza sozinho a cada `playwright install`).
+  **Atualização (branch `perf/imagem-api-ajustes`):** o corte de `locales/` foi **aplicado**
+  (ver "Ajustes finais" abaixo); o `WidevineCdm` continua **como proposta** — o teste de DRM
+  mostrou diferença detectável na API do navegador (ver seção "DRM (WidevineCdm)").
 - **(b) Duas imagens (API sem Chromium / worker com Chromium):** API = **574 MB**
   (du 406 MB, gz 143,7 MB) vs 1,26 GB do "depois"; worker ficaria a imagem atual. Como
   compartilham base+pip+Prisma, o registry guarda pouco mais que uma delas. **Impedimento:**
   o botão "Atualizar preço" (`POST /product/{id}/refresh`) roda `run_price_pipeline` na
   própria API, e o ML só funciona via Playwright — sem mover o refresh para uma task do
   worker (mudança de código/contrato, fora do escopo de imagem), o refresh do ML quebraria.
+  **Conclusão em "Ajustes finais" → "Duas imagens — fora do escopo"** (no homelab o total
+  baixado até aumentaria).
+
+## Ajustes finais (branch perf/imagem-api-ajustes)
+
+Régua igual ao ciclo anterior: `du -xsm /` (dentro do container) e
+`docker save | gzip | wc -c` (a régua confiável; o `docker image ls` do Docker Desktop com
+containerd soma comprimido + descomprimido, então não serve para comparar ganho real).
+
+### Baseline desta tarefa: `mv-aj:antes`
+
+`git archive origin/main` (origin/main = `69c0e52`) extraído numa pasta e
+`docker build -t mv-aj:antes <pasta>` — construído **de pasta**, como o CI (receita em
+"Como medir"; o primeiro build por `git archive | docker build -` ignorava o
+`Dockerfile.dockerignore` e entrava com `execution/tests`, 10 MB a mais — correção aplicada):
+
+| Métrica | Valor |
+|---|---|
+| `docker image ls` | 1,26 GB |
+| `du -xsm /` | **858 MB** ✓ (bate com o "depois" do ciclo anterior) |
+| Comprimido (`save \| gzip`) | **350.806.386 B ≈ 350,8 MB** ✓ |
+| `/app/execution` | sem `tests` ✓ (igual à `mv-aj:depois`) |
+
+Runtime da `mv-aj:antes` (sem `-PeakUrl`): `GET /` 3,5 s, RAM API **67,7 MiB**, RAM worker
+**130,5 MiB** (mediana de 5 amostras; uma primeira rodada deu 157,9 MiB — filho do prefork do
+Celery pego no meio de ciclo, uma segunda rodada confirmou 130,5; worker ready/tasks/beat OK).
+O teste de DRM não foi repetido: o Chromium da imagem reconstruída é idêntico (mesmas camadas
+em cache).
+
+### Traduções do Chromium (aplicado)
+
+Em `/ms-playwright/chromium-1248/chrome-linux64/locales/`. O `Dockerfile` não fixa a versão:
+acha a pasta com `find "$PLAYWRIGHT_BROWSERS_PATH" -type d -name locales -path '*chrom*'` e
+o build falha se não achar exatamente uma pasta ou se `en-US.pak`/`pt-BR.pak` não sobrarem.
+
+| Item | Antes | Depois |
+|---|---|---|
+| `locales/` | 50 MB, 220 arquivos `.pak` | **2 MB, 2 arquivos** (`en-US.pak` + `pt-BR.pak`) |
+| Pasta `chrome-linux64/` do Chromium | 403 MB | 355 MB |
+| Ganho no `du` da imagem | — | **−48 MB** (858 → 810 MB) |
+| Ganho no comprimido | — | **−13,0 MB** (350.806.386 → 337.791.730 B; camada do Playwright 427 → 377 MB) |
+
+Por que é seguro: o Chromium usa os `.pak` para textos da própria interface do navegador
+(páginas internas, diálogos, mensagens de erro de rede). As páginas de produto que o scraper
+lê são traduzidas pelo site, não pelo navegador. A linguagem que o site enxerga vem de
+`Accept-Language`/`navigator.languages` do contexto do Playwright (pt-BR), que não depende
+dos `.pak`. **Verificação da impressão digital (feita):** a página renderizada pelo Chromium
+saiu com as 91 linhas do fingerprint idênticas linha por linha antes × depois; mensagens de
+validação de formulário vieram em **inglês nas duas imagens** (o Chromium já usava
+`en-US.pak` para isso, que continua na imagem; `pt-BR.pak` fica por segurança).
+
+### DRM (WidevineCdm) — proposta, não aplicado
+
+`WidevineCdm/` em `/ms-playwright/chromium-1248/chrome-linux64/`: **21 MB**, com
+`LICENSE`, `manifest.json` (Widevine Content Decryption Module 4.10.3112.0, codecs
+`vp8,vp09,avc1,av01`, esquemas `cenc`/`cbcs`) e `_platform_specific/linux_x64/libwidevinecdm.so`.
+
+Teste feito na `mv-aj:antes`, navegador aberto **exatamente como o scraper abre**
+(`ps._open_disposable_context(p)` dentro de `sync_playwright()`), página **https**
+(`context.route("https://probe.test/**", ...)` com `route.fulfill` — o EME exige contexto
+seguro; `data:` não serve), chamando
+`navigator.requestMediaKeySystemAccess('com.widevine.alpha', ...)` (com
+`robustness: 'SW_SECURE_CRYPTO'`), `org.w3.clearkey` como controle, e `navigator.plugins`/
+`mimeTypes`. Segunda execução no mesmo container após `rm -rf` da pasta (a imagem não muda):
+
+| Teste | Com WidevineCdm | Sem WidevineCdm |
+|---|---|---|
+| `com.widevine.alpha` | **ok** — resolve com a config pedida (`initDataTypes cenc`, vídeo avc1 com `robustness SW_SECURE_CRYPTO`, áudio mp4a.40.2) | **erro `NotSupportedError: Unsupported keySystem or supportedConfigurations.`** |
+| `org.w3.clearkey` | ok | ok (idêntico) |
+| `navigator.plugins` | 5 (PDF Viewer…) | idênticos |
+| `navigator.mimeTypes` | `application/pdf`, `text/pdf` | idênticos |
+
+**As saídas NÃO são iguais.** Sem a pasta, o Chromium rejeita o key system Widevine na API
+do navegador — e isso é **detectável por qualquer site com uma linha de JS**
+(`requestMediaKeySystemAccess('com.widevine.alpha')` resolve ou rejeita), sem precisar tocar
+em conteúdo DRM de verdade. É o que significa a diferença: o Chromium completo do Playwright
+traz o módulo Widevine como o Chrome de um usuário comum de Linux; sem ele, o navegador do
+scraper fica "sem DRM", um sinal a menos de navegador real.
+
+**Por que não removemos:** o ganho é pequeno (21 MB de conteúdo, ~1,6% da imagem) e a
+mudança aparece justamente para o site, numa checagem de uma linha. Não sabemos se o Mercado
+Livre olha esse sinal, mas ele já barra o navegador do scraper com `login_wall` em parte das
+visitas, e um sinal a menos de "Chrome de verdade" pode piorar isso sem que dê para medir
+antes. Clearkey, plugins e mimeTypes continuarem iguais não muda a conclusão. Fica como
+proposta, não aplicada: só valeria tentar se o ML um dia deixar de importar.
+
+### Bibliotecas de GPU (decisão: ficam fora)
+
+O `libgbm1` (necessário ao Chromium) puxa como dependência dura `mesa-libgallium` (41,6 MB),
+`libllvm19` (126,7 MB) e `libz3-4` (27,1 MB) — a pilha gráfica/compilador do mesa. O
+Chromium headless do scraper não usa GPU do sistema: o WebGL sai pelo **SwiftShader**
+(que vem dentro do próprio bundle do Playwright) com vendor/renderer idêntico antes × depois
+da otimização (ver "Verificação de funções", item 5). Por isso as três ficam fora, via
+`dpkg --purge --force-depends mesa-libgallium libllvm19 libz3-4` no `RUN` do apt.
+
+- **Efeito colateral no dpkg:** o purge forçado deixa `libgbm1` marcado com dependência
+  quebrada. Só afeta um `apt-get install` futuro **dentro** da imagem (que ninguém faz em
+  produção); se um dia precisar de aceleração de GPU real, remover a linha do purge.
+- **Regra para o Dockerfile:** qualquer `apt-get install` novo deve vir **antes** da linha
+  do purge (o comentário acima do `RUN` do apt diz isso). Depois dela o apt recusa instalar
+  por causa da dependência quebrada do `libgbm1` e pede `apt --fix-broken install`, que
+  traria mesa/llvm/z3 de volta.
+- **Teste de fumaça no Actions (BUILD, aplicado no workflow):** o diff de
+  `.github/workflows/docker-publish.yml` adiciona dois passos no job da API (com
+  `if: matrix.image == 'melhores-valores-api'`), **antes** do passo que publica:
+  1. *Construir a imagem para o teste* — `docker/build-push-action@v6` com `load: true`,
+     `push: false`, `tags: mv-api:smoke` e `cache-from: type=gha` (sem `cache-to`: quem grava
+     o cache é o passo de publicar, que reutiliza este build);
+  2. *Teste em si* — `set -euo pipefail` + `docker run --rm --network none` (imagem isolada
+     de rede) rodando `node --version && prisma --version` e um `python -c` que abre o
+     Chromium **como o scraper** (`ps._open_disposable_context(p)`), carrega
+     `data:text/html,<title>ok</title>`, confere o título e confere que
+     `ps._browser_version_cache` ficou preenchido.
+  Se o Node, o Prisma ou o Chromium (dependências das libs de sistema) não funcionarem, o
+  job falha **antes de publicar**. Evidência do BUILD: na `mv-aj:depois` o passo passa
+  (exit 0, `browser.version = 156.0.8078.4`); com `PLAYWRIGHT_BROWSERS_PATH` quebrado falha
+  (exit 1). Ressalva: validado só na execução local do passo extraído — ainda não rodou num
+  GitHub Actions de verdade.
+
+### Duas imagens — fora do escopo
+
+**Conclusão: não faz para este projeto.** No homelab, API e worker usam a **mesma** imagem
+(`ghcr.io/ladongx/melhores-valores-api`), baixada uma vez: 1,26 GB (gz 350,8 MB) e pronto.
+Com duas imagens (API sem Chromium **574 MB** / du 406 MB / gz 143,7 MB + worker 1,26 GB,
+com a base compartilhada só parcialmente), **o total baixado aumentaria** — a economia de
+574 MB só apareceria se o worker fosse dispensado, e ele não é. E ainda exigiria mover o
+botão "Atualizar preço" (`POST /product/{id}/refresh`, que roda `run_price_pipeline` na
+própria API — e o ML só funciona via Playwright) para uma tarefa do worker: mudança de
+código/contrato, fora do escopo de imagem. Precondição, se um dia o total baixado importar
+mais que a simplicidade: primeiro o refresh vira task do worker; só depois vale discutir
+duas imagens.
+
+### Antes × depois (ajustes finais)
+
+`mv-aj:antes` vs `mv-aj:depois`, ambas construídas de pasta (igual ao CI). Os itens
+"comentário" e "teste de fumaça" não mudam a imagem (o teste é um passo do workflow); o
+Widevine foi mantido.
+
+| Item | Ganho em conteúdo (`du`) | Ganho comprimido |
+|---|---|---|
+| Traduções do Chromium (220 → 2 `.pak`) | **−48 MB** (858 → 810 MB) | **−13,0 MB** (350.806.386 → 337.791.730 B) |
+| Comentário no Dockerfile / purge de GPU libs | 0 (já estavam no ciclo anterior) | 0 |
+| Teste de fumaça no workflow | 0 (não muda a imagem) | 0 |
+| WidevineCdm | mantido (21 MB) — ver seção DRM | — |
+
+| Runtime (sem `-PeakUrl`) | Antes | Depois | Δ |
+|---|---|---|---|
+| Tempo até `GET /` (200) | 3,5 s | 3,0 s | dentro do ruído |
+| RAM repouso API | 67,7 MiB | 67,7 MiB | 0% ✓ |
+| RAM repouso worker | 130,5 MiB | 130,4 MiB | −0,1% ✓ (dentro de ±5%) |
+| Worker ready/tasks/beat | OK | OK | — |
+
+### Verificação de funções (ajustes)
+
+Feitas pelo orquestrador na `mv-aj:depois` em 15/11/2026, com `FIRECRAWL_API_KEY=` vazio,
+numa rede Docker própria (`mvaj`, Postgres 15 e Redis 7, sem o compose do repo; a API
+publicada só em `127.0.0.1:8010` para não disputar a 8000 com a medição).
+
+| # | Verificação | Resultado |
+|---|---|---|
+| 1 | pytest com os testes montados por volume | ✅ `340 passed in 8.20s` (Python 3.11.18) |
+| 2 | `prisma migrate deploy` | ✅ banco vazio: as 8 aplicadas; banco com o dump do homelab (3 primeiras + dump + as outras 5): 25 produtos / 946 preços / 409 buscas preservados, 8 migrações registradas; 2ª execução `No pending migrations to apply.` |
+| 3 | API com o comando de produção | ✅ `GET /` 200 (5,1 s nesta rodada, com a medição rodando ao lado; o número limpo é o do script, 3,0 s); `/products` (25), `/groups`, `/stores/stats?days=1` → 200; log sem `ERROR`/`Traceback` |
+| 4 | Worker com o comando de produção | ✅ `ready`, `process_price_check` e `schedule_all_products` registradas, `beat: Starting...`, agenda `schedule-all-products-every-6-hours` com `crontab 0 */6 * * *` |
+| 5 | Chromium | ✅ impressão digital ampliada **idêntica nas 91 linhas** entre `mv-aj:antes` e `mv-aj:depois` (abaixo); `browser.version = 156.0.8078.4`; perfil persistente criado e reaberto (`perfil reaberto novo = False`) |
+| 6 | Scraping real curto | ✅ Amazon pelo httpx e pelo Playwright com o preço da página; Playwright com o **mesmo preço nas duas imagens**; ML com a **mesma resposta nas duas imagens**, na mesma hora |
+| 7 | `POST /product/{id}/refresh` (Amazon) | ✅ `{"status":"ok","price":59.18,"in_stock":true,...}`, `CheckAttempt` com `trigger=manual`, nível 1 |
+| 8 | Front | ✅ `apps/web/Dockerfile` e o `.dockerignore` da raiz não mudaram nesta branch; o workflow só ganhou passos com `if:` da API, e o passo do front ficou igual |
+| 9 | pnpm lint/typecheck/test | — não se aplica: nenhum arquivo do monorepo foi tocado |
+
+**Impressão digital (item 5).** Script do orquestrador, rodado com `--network none` nas duas
+imagens. Ele abre o navegador como o scraper (`_open_disposable_context` e
+`_open_persistent_context(p, "mercadolivre")`) numa página `https://probe.test/` servida por
+`context.route` (contexto seguro, sem rede) e registra:
+
+- os **cabeçalhos HTTP reais** da navegação;
+- o `navigator`, o `Intl` e a formatação local;
+- WebGL, canvas, fontes e o perfil persistente.
+
+`Compare-Object` entre as duas saídas: vazio. Trechos da `mv-aj:depois`:
+
+```
+browser.version = 156.0.8078.4
+[descartavel] header accept-language = pt-BR
+[descartavel] header user-agent = Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36
+[descartavel] header sec-ch-ua = "Not:A-Brand";v="8", "Chromium";v="156"
+[descartavel] header sec-ch-ua-platform = "Linux"
+[descartavel] language = pt-BR
+[descartavel] languages = pt-BR
+[descartavel] dtf = {"locale":"pt-BR","calendar":"gregory","numberingSystem":"latn","timeZone":"America/Sao_Paulo","year":"numeric","month":"2-digit","day":"2-digit"}
+[descartavel] collator = pt-BR
+[descartavel] dateStr = 15/11/2026, 12:00:00
+[descartavel] numStr = 1.234.567,891
+[descartavel] currency = R$ 1.234,50
+[descartavel] plugins = PDF Viewer|Chrome PDF Viewer|Chromium PDF Viewer|Microsoft Edge PDF Viewer|WebKit built-in PDF
+[descartavel] webglRenderer = ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)
+[descartavel] canvasHash = 779721659
+[descartavel] fonts = sans-serif=114,serif=114,monospace=96,Arial=114,DejaVu Sans=114
+[descartavel] validationMsg = Please fill out this field.
+perfil reaberto novo = False
+```
+
+**Scraping real (itens 6 e 7).** Poucas visitas, sem loop:
+
+| Visita | Imagem | Resultado | Página no Chrome |
+|---|---|---|---|
+| `POST /product/{id}/refresh` de `dp/6525948150` | depois | nível 1 (httpx), `ok`, **R$ 59,18**, `amazon`, `physical` | R$ 59,18, Capa Comum, Enviado/Vendido Amazon.com.br |
+| `POST /monitor/add` de `dp/6581339210` (fila → worker) | depois | nível 1 (httpx), `ok`, **R$ 121,01**, `amazon`, `physical`, `trigger=added` | R$ 121,01, Capa Comum, Enviado/Vendido Amazon.com.br |
+| Nível 2 forçado de `dp/6581339210` (httpx desligado só no teste) | antes | Playwright, 11,7 s, **R$ 121,01**, `amazon`, `physical` | idem |
+| idem | depois | Playwright, 12,0 s, **R$ 121,01**, `amazon`, `physical` | idem |
+| ML `ritmo-da-guerra/p/MLB60505498`, cascata real | antes (17:44) | nível 2, `login_wall`, 33,5 s, Firecrawl pulado | — |
+| idem | depois (17:45) | nível 2, `login_wall`, 33,7 s, Firecrawl pulado | — |
+
+O ML deu `login_wall` nas duas imagens, com um minuto de diferença. Desta máquina ele já
+barrava o scraper antes destes ajustes; o resultado igual é o que importa aqui.
+
+**Regra do apt (item 3 da tarefa).** Teste num container descartável da `mv-aj:depois`:
+`apt-get update && apt-get install -y xz-utils` →
+`libgbm1 : Depends: mesa-libgallium (= 25.0.7-2+deb13u1) but it is not going to be installed`
+e `E: Unmet dependencies. Try 'apt --fix-broken install'`. É exatamente o que o comentário
+do `Dockerfile` avisa: instalação nova só antes da linha do purge.
