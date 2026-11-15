@@ -43,6 +43,39 @@ jobs:
             type=raw,value=latest
             type=sha,format=short
 
+      # Teste de fumaça (só a API): constrói a imagem localmente (load, sem push) e roda sem rede.
+      # Se o Node, o Prisma ou o Chromium não funcionarem, o job falha antes de publicar.
+      # Sem cache-to aqui: o passo de publicar abaixo grava o cache e reaproveita este build.
+      - name: Construir a imagem da API para o teste de fumaça
+        if: matrix.image == 'melhores-valores-api'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: mv-api:smoke
+          cache-from: type=gha,scope=${{ matrix.image }}
+
+      - name: Teste de fumaça da imagem da API (node, prisma e Chromium, sem rede)
+        if: matrix.image == 'melhores-valores-api'
+        run: |
+          set -euo pipefail
+          docker run --rm --network none -e FIRECRAWL_API_KEY= mv-api:smoke sh -c 'node --version && prisma --version'
+          docker run --rm --network none -e FIRECRAWL_API_KEY= mv-api:smoke python -c "
+          from playwright.sync_api import sync_playwright
+          from execution.scrapers import playwright_scraper as ps
+          with sync_playwright() as p:
+              context, close = ps._open_disposable_context(p)
+              page = context.new_page()
+              page.goto('data:text/html,<title>ok</title>')
+              assert page.title() == 'ok', 'Chromium não renderizou a página'
+              close()
+          print('browser.version =', ps._browser_version_cache)
+          assert ps._browser_version_cache, 'browser.version vazio'
+          "
+
       - uses: docker/build-push-action@v6
         with:
           context: .
